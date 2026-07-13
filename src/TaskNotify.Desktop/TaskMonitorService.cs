@@ -8,18 +8,25 @@ public sealed class TaskMonitorService
 {
     private readonly CancellationTokenSource _cancellation = new();
     private readonly ProcessTaskTracker _tracker = new();
-    private readonly WmiProcessMonitor _monitor = new();
+    private readonly WmiProcessMonitor _monitor;
+    private readonly SnapshotProcessMonitor _snapshotMonitor = new();
     private readonly TaskHistoryViewModel _history;
     private readonly TrayIconService _tray;
-    private Task? _runTask;
+    private Task? _wmiTask;
+    private Task? _snapshotTask;
 
     public TaskMonitorService(TaskHistoryViewModel history, TrayIconService tray)
     {
         _history = history;
         _tray = tray;
+        _monitor = new();
     }
 
-    public void Start() => _runTask = _monitor.RunAsync(HandleEventAsync, _cancellation.Token);
+    public void Start()
+    {
+        _snapshotTask = _snapshotMonitor.RunAsync(HandleEventAsync, _cancellation.Token);
+        _wmiTask = RunWmiAsync();
+    }
 
     public void Stop() => _cancellation.Cancel();
 
@@ -33,5 +40,16 @@ public sealed class TaskMonitorService
             _history.Add(notice);
             _tray.Show(notice);
         }, System.Windows.Threading.DispatcherPriority.Normal, cancellationToken);
+    }
+
+    private async Task RunWmiAsync()
+    {
+        try
+        {
+            await _monitor.RunAsync(HandleEventAsync, _cancellation.Token);
+        }
+        catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
+        {
+        }
     }
 }

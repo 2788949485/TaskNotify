@@ -160,7 +160,7 @@ public static class BuiltInDetectionRules
         new("Python", 30, ProcessNamePattern: @"^(python|pythonw|py)\.exe$"),
         new("Node", 30, ProcessNamePattern: @"^(node|npm|pnpm|yarn)\.(exe|cmd)$"),
         new("ffmpeg", 30, ProcessNamePattern: @"^ffmpeg\.exe$"),
-        new("终端父进程", 20, ParentProcessNamePattern: @"^(WindowsTerminal|powershell|pwsh|cmd)\.exe$"),
+        new("终端父进程", 20, ParentProcessNamePattern: @"^(WindowsTerminal|powershell|pwsh|cmd|Gateway)\.exe$"),
         new("IDE 父进程", 15, ParentProcessNamePattern: @"^(Code|devenv|pycharm64|idea64)\.exe$"),
         new("任务命令", 20, CommandLinePattern: @"\b(build|test|train|process)\b"),
         new("运行超过 30 秒", 15, MinimumDuration: TimeSpan.FromSeconds(30))

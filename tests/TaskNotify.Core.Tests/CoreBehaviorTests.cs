@@ -77,6 +77,20 @@ public sealed class CoreBehaviorTests
     }
 
     [Fact]
+    public void Python_from_gateway_notifies_after_twenty_seconds()
+    {
+        var tracker = new ProcessTaskTracker();
+        var start = DateTimeOffset.UtcNow;
+        var process = new ProcessIdentity(100, start);
+
+        tracker.Handle(new ProcessStartedEvent(process, 1, "python.exe", start, ParentProcessName: "Gateway.exe"));
+        var notice = tracker.Handle(new ProcessStoppedEvent(100, "python.exe", start.AddSeconds(25), process));
+
+        Assert.NotNull(notice);
+        Assert.Equal(TaskState.EndedUnknown, notice.State);
+    }
+
+    [Fact]
     public void A_stale_stop_event_cannot_end_a_reused_process_id()
     {
         var tracker = new ProcessTaskTracker();
