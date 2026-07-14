@@ -18,8 +18,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TaskNotify.Core\TaskNotify.Core.csproj" />
+    <ProjectReference Include="..\TaskNotify.Infrastructure\TaskNotify.Infrastructure.csproj" />
     <ProjectReference Include="..\TaskNotify.ProcessMonitor\TaskNotify.ProcessMonitor.csproj" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250310001" />
   </ItemGroup>
 

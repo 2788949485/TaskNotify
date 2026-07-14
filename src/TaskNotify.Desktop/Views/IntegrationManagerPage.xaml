@@ -1,0 +1,78 @@
+<UserControl x:Class="TaskNotify.Desktop.Views.IntegrationManagerPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="{DynamicResource {x:Static SystemColors.ControlLightLightBrushKey}}"
+            CornerRadius="6" Padding="20,18">
+        <DockPanel>
+            <Grid DockPanel.Dock="Top" Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           FontSize="13"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           Text="管理各集成 Hook 的安装状态。" />
+                <Button Grid.Column="1"
+                        Padding="14,4"
+                        Content="全部刷新"
+                        Command="{Binding RefreshAllCommand}" />
+            </Grid>
+
+            <ItemsControl ItemsSource="{Binding Integrations}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,0,0,12"
+                                Padding="16,12"
+                                CornerRadius="4"
+                                Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+                                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                                BorderThickness="0,0,0,1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding DisplayName}"
+                                                   FontSize="14" FontWeight="SemiBold" />
+                                        <TextBlock Margin="10,0,0,0"
+                                                   VerticalAlignment="Center"
+                                                   FontSize="11"
+                                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                                   Text="{Binding Status}" />
+                                    </StackPanel>
+                                    <TextBlock Margin="0,4,0,0"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                               Text="{Binding Description}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Margin="0,4,0,0"
+                                               FontSize="11"
+                                               Text="{Binding LastMessage}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Padding="14,6"
+                                        Content="安装"
+                                        Command="{Binding InstallOrReinstallCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Installed}" Value="True">
+                                                    <Setter Property="Content" Value="重装" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </DockPanel>
+    </Border>
+</UserControl>

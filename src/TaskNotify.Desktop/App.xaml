@@ -1,6 +1,41 @@
 <Application x:Class="TaskNotify.Desktop.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskNotify.Desktop.ViewModels"
+             xmlns:views="clr-namespace:TaskNotify.Desktop.Views"
+             xmlns:converters="clr-namespace:TaskNotify.Desktop.Converters"
              ShutdownMode="OnExplicitShutdown">
-    <Application.Resources />
+    <Application.Resources>
+        <converters:EnumToBoolConverter x:Key="EnumToBoolConverter" />
+        <DataTemplate DataType="{x:Type vm:TaskCenterViewModel}">
+            <views:TaskListPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:RunningTasksViewModel}">
+            <views:TaskListPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:RecentCompletedViewModel}">
+            <views:TaskListPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:DetectionSettingsViewModel}">
+            <views:DetectionSettingsPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ProgramRulesViewModel}">
+            <views:ProgramRulesPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:IntegrationManagerViewModel}">
+            <views:IntegrationManagerPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:NotificationSettingsViewModel}">
+            <views:NotificationSettingsPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:PrivacySettingsViewModel}">
+            <views:PrivacySettingsPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SystemSettingsViewModel}">
+            <views:SystemSettingsPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:PlaceholderViewModel}">
+            <views:PlaceholderPage />
+        </DataTemplate>
+    </Application.Resources>
 </Application>

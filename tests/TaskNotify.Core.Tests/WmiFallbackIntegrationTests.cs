@@ -17,11 +17,10 @@ public sealed class WmiFallbackIntegrationTests
         CancellationTokenSource? snapshotCancellation = null;
         Task? snapshotTask = null;
 
-        ValueTask Handle(ProcessLifecycleEvent processEvent, CancellationToken _)
+        async ValueTask Handle(ProcessLifecycleEvent processEvent, CancellationToken _)
         {
-            var notice = tracker.Handle(processEvent);
+            var notice = await tracker.Handle(processEvent);
             if (notice?.DisplayName == "python.exe") completion.TrySetResult(notice);
-            return ValueTask.CompletedTask;
         }
 
         var snapshot = new SnapshotProcessMonitor();

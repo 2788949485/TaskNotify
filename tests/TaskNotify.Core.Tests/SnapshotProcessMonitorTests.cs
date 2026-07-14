@@ -24,13 +24,13 @@ public sealed class SnapshotProcessMonitorTests
         Assert.NotNull(host);
         var monitor = new SnapshotProcessMonitor();
         var targetProcessId = 0;
-        var monitoring = monitor.RunAsync((processEvent, _) =>
+        var monitoring = monitor.RunAsync(async (processEvent, _) =>
         {
             if (processEvent is ProcessStartedEvent started)
             {
                 if (started.ProcessName != "python.exe" || started.ParentProcessId != host.Id)
                 {
-                    return ValueTask.CompletedTask;
+                    return;
                 }
 
                 targetProcessId = started.Identity.ProcessId;
@@ -38,16 +38,14 @@ public sealed class SnapshotProcessMonitorTests
 
             if (targetProcessId == 0 || processEvent is ProcessStoppedEvent stopped && stopped.ProcessId != targetProcessId)
             {
-                return ValueTask.CompletedTask;
+                return;
             }
 
-            var notice = tracker.Handle(processEvent);
+            var notice = await tracker.Handle(processEvent);
             if (notice?.DisplayName == "python.exe")
             {
                 completion.TrySetResult(notice);
             }
-
-            return ValueTask.CompletedTask;
         }, cancellation.Token);
         try
         {

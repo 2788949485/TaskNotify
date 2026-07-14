@@ -153,6 +153,10 @@ public static class NotificationThreshold
 
 public static class BuiltInDetectionRules
 {
+    /// <summary>
+    /// Balanced (default, doc 8.2). A curated shortlist of build/toolchain
+    /// processes plus a couple of suppress-filters for resident noise.
+    /// </summary>
     public static IReadOnlyList<DetectionRule> Balanced { get; } =
     [
         new("系统或后台关键词", Action: RuleAction.Ignore, CommandLinePattern: @"\b(language-server|language_server|pylance|debugpy|extensionHost|tsserver|electron|telemetry|update)\b"),
@@ -160,9 +164,44 @@ public static class BuiltInDetectionRules
         new("Python", 30, ProcessNamePattern: @"^(python|pythonw|py)\.exe$"),
         new("Node", 30, ProcessNamePattern: @"^(node|npm|pnpm|yarn)\.(exe|cmd)$"),
         new("ffmpeg", 30, ProcessNamePattern: @"^ffmpeg\.exe$"),
-        new("终端父进程", 20, ParentProcessNamePattern: @"^(WindowsTerminal|powershell|pwsh|cmd|Gateway)\.exe$"),
+        new("终端父进程", 20, ParentProcessNamePattern: @"^(WindowsTerminal|wezterm-gui|alacritty|powershell|pwsh|cmd|Gateway)\.exe$"),
         new("IDE 父进程", 15, ParentProcessNamePattern: @"^(Code|devenv|pycharm64|idea64)\.exe$"),
         new("任务命令", 20, CommandLinePattern: @"\b(build|test|train|process)\b"),
         new("运行超过 30 秒", 15, MinimumDuration: TimeSpan.FromSeconds(30))
     ];
+
+    /// <summary>
+    /// Precise (doc 8.1). No inference from raw process exit; only integration
+    /// hooks notify. Achieved by returning an empty rule set so WMI candidates
+    /// score 0 → Ignored → never tracked, never notified.
+    /// </summary>
+    public static IReadOnlyList<DetectionRule> Precise { get; } = Array.Empty<DetectionRule>();
+
+    /// <summary>
+    /// Broad (doc 8.3). Balanced plus an expanded toolchain shortlist
+    /// (java, dotnet, msbuild, cl, cargo, rustc, cmake, ninja, …).
+    /// </summary>
+    public static IReadOnlyList<DetectionRule> Broad { get; } =
+    [
+        new("系统或后台关键词", Action: RuleAction.Ignore, CommandLinePattern: @"\b(language-server|language_server|pylance|debugpy|extensionHost|tsserver|electron|telemetry|update)\b"),
+        new("常驻开发服务器", Action: RuleAction.Ignore, CommandLinePattern: @"\b(watch|dev-server|vite\s+--host|webpack\s+serve)\b"),
+        new("Python", 30, ProcessNamePattern: @"^(python|pythonw|py)\.exe$"),
+        new("Node", 30, ProcessNamePattern: @"^(node|npm|pnpm|yarn)\.(exe|cmd)$"),
+        new("ffmpeg", 30, ProcessNamePattern: @"^ffmpeg\.exe$"),
+        new("Java", 30, ProcessNamePattern: @"^java(w)?\.exe$"),
+        new(".NET", 30, ProcessNamePattern: @"^(dotnet|msbuild|vstest\.console)\.exe$"),
+        new("Native build", 30, ProcessNamePattern: @"^(cl|link|cargo|rustc|cmake|ninja|make|g\+\+|gcc)\.exe$"),
+        new("终端父进程", 20, ParentProcessNamePattern: @"^(WindowsTerminal|wezterm-gui|alacritty|powershell|pwsh|cmd|Gateway)\.exe$"),
+        new("IDE 父进程", 15, ParentProcessNamePattern: @"^(Code|devenv|pycharm64|idea64)\.exe$"),
+        new("任务命令", 20, CommandLinePattern: @"\b(build|test|train|process|compile|link|deploy|pack|publish)\b"),
+        new("运行超过 30 秒", 15, MinimumDuration: TimeSpan.FromSeconds(30))
+    ];
+
+    /// <summary>Resolves the rule set for the given mode.</summary>
+    public static IReadOnlyList<DetectionRule> For(DetectionMode mode) => mode switch
+    {
+        DetectionMode.Precise => Precise,
+        DetectionMode.Broad => Broad,
+        _ => Balanced
+    };
 }

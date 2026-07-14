@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using TaskNotify.Core.Detection;
 using TaskNotify.Core.Events;
 
 namespace TaskNotify.ProcessMonitor;
@@ -8,10 +9,54 @@ public sealed class SnapshotProcessMonitor
 {
     // ponytail: 15-second degraded-mode polling catches the 20-second notification threshold; replace with ETW when available.
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(15);
-    private static readonly HashSet<string> CandidateNames = new(StringComparer.OrdinalIgnoreCase)
+
+    private readonly HashSet<string> _candidateNames;
+
+    public SnapshotProcessMonitor() : this(DetectionMode.Balanced) { }
+
+    public SnapshotProcessMonitor(DetectionMode detectionMode)
     {
-        "python.exe", "pythonw.exe", "py.exe", "node.exe", "npm.exe", "npm.cmd", "pnpm.exe", "pnpm.cmd", "yarn.exe", "yarn.cmd", "ffmpeg.exe"
-    };
+        _candidateNames = new HashSet<string>(CandidatesFor(detectionMode), StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Snapshot polling only catches processes whose name we watch. In Precise mode the
+    /// set is empty (no inference); in Broad mode we expand to additional toolchains.
+    /// </summary>
+    private static IEnumerable<string> CandidatesFor(DetectionMode mode)
+    {
+        // Common shortlist shared by Balanced and Broad. Precise returns nothing.
+        if (mode == DetectionMode.Precise) yield break;
+
+        yield return "python.exe";
+        yield return "pythonw.exe";
+        yield return "py.exe";
+        yield return "node.exe";
+        yield return "npm.exe";
+        yield return "npm.cmd";
+        yield return "pnpm.exe";
+        yield return "pnpm.cmd";
+        yield return "yarn.exe";
+        yield return "yarn.cmd";
+        yield return "ffmpeg.exe";
+
+        if (mode != DetectionMode.Broad) yield break;
+
+        yield return "java.exe";
+        yield return "javaw.exe";
+        yield return "dotnet.exe";
+        yield return "msbuild.exe";
+        yield return "vstest.console.exe";
+        yield return "cl.exe";
+        yield return "link.exe";
+        yield return "cargo.exe";
+        yield return "rustc.exe";
+        yield return "cmake.exe";
+        yield return "ninja.exe";
+        yield return "make.exe";
+        yield return "gcc.exe";
+        yield return "g++.exe";
+    }
 
     public async Task RunAsync(
         Func<ProcessLifecycleEvent, CancellationToken, ValueTask> handleEvent,
@@ -51,7 +96,7 @@ public sealed class SnapshotProcessMonitor
         }
     }
 
-    private static Dictionary<int, SnapshotProcess>? ReadCurrentSessionProcesses()
+    private Dictionary<int, SnapshotProcess>? ReadCurrentSessionProcesses()
     {
         var snapshot = CreateToolhelp32Snapshot(Th32csSnapProcess, 0);
         if (snapshot == InvalidHandleValue)
@@ -78,7 +123,7 @@ public sealed class SnapshotProcessMonitor
             using var currentProcess = Process.GetCurrentProcess();
             var currentSessionId = currentProcess.SessionId;
             var result = new Dictionary<int, SnapshotProcess>();
-            foreach (var entryValue in entries.Values.Where(entryValue => CandidateNames.Contains(entryValue.ExecutableName)))
+            foreach (var entryValue in entries.Values.Where(entryValue => _candidateNames.Contains(entryValue.ExecutableName)))
             {
                 try
                 {

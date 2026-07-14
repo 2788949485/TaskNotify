@@ -60,18 +60,18 @@ public sealed class CoreBehaviorTests
     }
 
     [Fact]
-    public void Parent_and_child_processes_produce_one_unknown_result_after_both_end()
+    public async Task Parent_and_child_processes_produce_one_unknown_result_after_both_end()
     {
         var tracker = new ProcessTaskTracker();
         var start = DateTimeOffset.UtcNow;
         var parent = new ProcessIdentity(100, start);
         var child = new ProcessIdentity(101, start.AddSeconds(1));
 
-        tracker.Handle(new ProcessStartedEvent(parent, 1, "python.exe", start, ParentProcessName: "pwsh.exe"));
-        tracker.Handle(new ProcessStartedEvent(child, 100, "ffmpeg.exe", start.AddSeconds(1)));
+        await tracker.Handle(new ProcessStartedEvent(parent, 1, "python.exe", start, ParentProcessName: "pwsh.exe"));
+        await tracker.Handle(new ProcessStartedEvent(child, 100, "ffmpeg.exe", start.AddSeconds(1)));
 
-        Assert.Null(tracker.Handle(new ProcessStoppedEvent(100, "python.exe", start.AddSeconds(25), parent)));
-        var notice = tracker.Handle(new ProcessStoppedEvent(101, "ffmpeg.exe", start.AddSeconds(26), child));
+        Assert.Null(await tracker.Handle(new ProcessStoppedEvent(100, "python.exe", start.AddSeconds(25), parent)));
+        var notice = await tracker.Handle(new ProcessStoppedEvent(101, "ffmpeg.exe", start.AddSeconds(26), child));
 
         Assert.NotNull(notice);
         Assert.Equal(TaskState.EndedUnknown, notice.State);
@@ -79,30 +79,30 @@ public sealed class CoreBehaviorTests
     }
 
     [Fact]
-    public void Python_from_gateway_notifies_after_twenty_seconds()
+    public async Task Python_from_gateway_notifies_after_twenty_seconds()
     {
         var tracker = new ProcessTaskTracker();
         var start = DateTimeOffset.UtcNow;
         var process = new ProcessIdentity(100, start);
 
-        tracker.Handle(new ProcessStartedEvent(process, 1, "python.exe", start, ParentProcessName: "Gateway.exe"));
-        var notice = tracker.Handle(new ProcessStoppedEvent(100, "python.exe", start.AddSeconds(25), process));
+        await tracker.Handle(new ProcessStartedEvent(process, 1, "python.exe", start, ParentProcessName: "Gateway.exe"));
+        var notice = await tracker.Handle(new ProcessStoppedEvent(100, "python.exe", start.AddSeconds(25), process));
 
         Assert.NotNull(notice);
         Assert.Equal(TaskState.EndedUnknown, notice.State);
     }
 
     [Fact]
-    public void A_stale_stop_event_cannot_end_a_reused_process_id()
+    public async Task A_stale_stop_event_cannot_end_a_reused_process_id()
     {
         var tracker = new ProcessTaskTracker();
         var first = new ProcessIdentity(100, DateTimeOffset.UtcNow);
         var replacement = new ProcessIdentity(100, first.StartedAt.AddMinutes(1));
 
-        tracker.Handle(new ProcessStartedEvent(first, 1, "python.exe", first.StartedAt));
-        tracker.Handle(new ProcessStartedEvent(replacement, 1, "python.exe", replacement.StartedAt));
+        await tracker.Handle(new ProcessStartedEvent(first, 1, "python.exe", first.StartedAt));
+        await tracker.Handle(new ProcessStartedEvent(replacement, 1, "python.exe", replacement.StartedAt));
 
-        Assert.Null(tracker.Handle(new ProcessStoppedEvent(100, "python.exe", replacement.StartedAt.AddSeconds(30), first)));
+        Assert.Null(await tracker.Handle(new ProcessStoppedEvent(100, "python.exe", replacement.StartedAt.AddSeconds(30), first)));
     }
 
     [Fact]

@@ -1,6 +1,10 @@
 using System.Windows;
+using TaskNotify.Core.Detection;
 using TaskNotify.Core.Events;
+using TaskNotify.Core.Interfaces;
+using TaskNotify.Core.Performance;
 using TaskNotify.Core.Tasks;
+using TaskNotify.Infrastructure.Settings;
 using TaskNotify.Integrations;
 using TaskNotify.ProcessMonitor;
 
@@ -9,9 +13,9 @@ namespace TaskNotify.Desktop;
 public sealed class TaskMonitorService
 {
     private readonly CancellationTokenSource _cancellation = new();
-    private readonly ProcessTaskTracker _tracker = new();
+    private readonly ProcessTaskTracker _tracker;
     private readonly WmiProcessMonitor _monitor;
-    private readonly SnapshotProcessMonitor _snapshotMonitor = new();
+    private readonly SnapshotProcessMonitor _snapshotMonitor;
     private readonly IntegrationEventListener _integrationListener;
     private readonly TaskHistoryViewModel _history;
     private readonly TrayIconService _tray;
@@ -20,10 +24,20 @@ public sealed class TaskMonitorService
     private Task? _snapshotTask;
     private CancellationTokenSource? _snapshotCancellation;
 
-    public TaskMonitorService(TaskHistoryViewModel history, TrayIconService tray)
+    public TaskMonitorService(
+        TaskHistoryViewModel history,
+        TrayIconService tray,
+        IDetectedTaskRepository taskRepository,
+        IProcessEventRepository eventRepository,
+        CapacityGuard capacityGuard,
+        AppSettingsStore settingsStore,
+        ResidentProcessDetector residentDetector)
     {
         _history = history;
         _tray = tray;
+        var mode = settingsStore.Current.DetectionMode;
+        _tracker = new(taskRepository, eventRepository, capacityGuard, mode, residentDetector);
+        _snapshotMonitor = new(mode);
         _monitor = new(StartSnapshotFallback, StopSnapshotFallback);
         _integrationListener = new(_tracker);
         _integrationListener.OnCompletionNotice += HandleNotice;
@@ -40,6 +54,7 @@ public sealed class TaskMonitorService
         _cancellation.Cancel();
         StopSnapshotFallback();
         _integrationListener.Dispose();
+        _tracker.Dispose();
     }
 
     private async ValueTask ForwardToTracker(ProcessLifecycleEvent processEvent, CancellationToken cancellationToken)
@@ -49,7 +64,7 @@ public sealed class TaskMonitorService
 
     private async ValueTask HandleEventAsync(ProcessLifecycleEvent processEvent, CancellationToken cancellationToken)
     {
-        var notice = _tracker.Handle(processEvent);
+        var notice = await _tracker.Handle(processEvent, cancellationToken).ConfigureAwait(false);
         if (notice is null) return;
 
         await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>

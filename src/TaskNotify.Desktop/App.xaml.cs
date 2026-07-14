@@ -1,7 +1,17 @@
+using System.IO;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Windows.AppNotifications;
+using TaskNotify.Core.Detection;
+using TaskNotify.Core.Interfaces;
+using TaskNotify.Core.Learning;
+using TaskNotify.Core.Performance;
+using TaskNotify.Core.Recovery;
 using TaskNotify.Core.Tasks;
+using TaskNotify.Infrastructure;
+using TaskNotify.Infrastructure.Settings;
+using TaskNotify.Infrastructure.SystemInfo;
 using TaskNotify.Integrations.Claude;
 using TaskNotify.Integrations.Codex;
 using TaskNotify.Integrations.Hermes;
@@ -21,6 +31,7 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        RegisterGlobalExceptionHandlers();
         if (e.Args.Contains("--install-hermes", StringComparer.OrdinalIgnoreCase))
         {
             try
@@ -37,15 +48,78 @@ public partial class App : System.Windows.Application
 
         RegisterNotifications();
 
-        var services = new ServiceCollection()
-            .AddSingleton<TaskHistoryViewModel>()
-            .AddSingleton<MainWindow>();
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder
+            .SetMinimumLevel(LogLevel.Information)
+            .AddTaskNotifyFileLogger());
+
+        services.AddSingleton<SqliteDatabase>(sp => new SqliteDatabase(
+            customPath: null,
+            logger: sp.GetRequiredService<ILogger<SqliteDatabase>>(),
+            loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
+        services.AddSingleton<IDetectedTaskRepository, Infrastructure.Repositories.DetectedTaskRepository>();
+        services.AddSingleton<IProcessEventRepository, Infrastructure.Repositories.ProcessEventRepository>();
+        services.AddSingleton<IDetectionRuleRepository, Infrastructure.Repositories.DetectionRuleRepository>();
+        services.AddSingleton<IIntegrationRepository, Infrastructure.Repositories.IntegrationRepository>();
+        services.AddSingleton<JsonSettingsStore>();
+        services.AddSingleton<AppSettingsStore>();
+        services.AddSingleton<ISystemBootProvider, SystemBootProvider>();
+        services.AddSingleton<ResidentProcessDetector>();
+        services.AddSingleton<LearningActions>();
+        services.AddSingleton<CapacityGuard>();
+        services.AddSingleton<Services.NavigationService>();
+        services.AddSingleton<ViewModels.MainViewModel>();
+        services.AddSingleton<ViewModels.TaskCenterViewModel>();
+        services.AddSingleton<ViewModels.RunningTasksViewModel>();
+        services.AddSingleton<ViewModels.RecentCompletedViewModel>();
+        services.AddSingleton<ViewModels.DetectionSettingsViewModel>();
+        services.AddSingleton<ViewModels.ProgramRulesViewModel>();
+        services.AddSingleton<ViewModels.IntegrationManagerViewModel>();
+        services.AddSingleton<ViewModels.NotificationSettingsViewModel>();
+        services.AddSingleton<ViewModels.PrivacySettingsViewModel>();
+        services.AddSingleton<ViewModels.SystemSettingsViewModel>();
+        services.AddSingleton<TaskRecoveryService>();
+        services.AddSingleton<TaskHistoryViewModel>();
+        services.AddSingleton<MainWindow>();
         _services = services.BuildServiceProvider();
+
+        // Initialize SQLite schema (idempotent). Failure is non-fatal; repositories will no-op.
+        try
+        {
+            var database = _services.GetRequiredService<SqliteDatabase>();
+            database.InitializeAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            _services.GetRequiredService<ILogger<App>>().LogError(exception, "Failed to initialize SQLite database.");
+        }
+
+        // Recover tasks left Running by a previous crash (doc chapter 28.2). Non-fatal on failure.
+        try
+        {
+            var recovery = _services.GetRequiredService<TaskRecoveryService>();
+            var recovered = recovery.RecoverAsync(CancellationToken.None).GetAwaiter().GetResult();
+            if (recovered > 0)
+            {
+                _services.GetRequiredService<ILogger<App>>()
+                    .LogInformation("Recovered {Count} stale task(s) as EndedUnknown.", recovered);
+            }
+        }
+        catch (Exception exception)
+        {
+            _services.GetRequiredService<ILogger<App>>().LogError(exception, "Task recovery scan failed; continuing.");
+        }
+
         _history = _services.GetRequiredService<TaskHistoryViewModel>();
         _mainWindow = _services.GetRequiredService<MainWindow>();
         _tray = new(ShowMainWindow, ExitApplication, TestNotification, InstallPowerShellIntegration, InstallClaudeIntegration, InstallCodexIntegration, InstallHermesIntegration);
         RefreshInstalledIntegrations();
-        _monitor = new(_history, _tray);
+        var taskRepo = _services.GetRequiredService<IDetectedTaskRepository>();
+        var eventRepo = _services.GetRequiredService<IProcessEventRepository>();
+        var capacity = _services.GetRequiredService<CapacityGuard>();
+        var settings = _services.GetRequiredService<AppSettingsStore>();
+        var residentDetector = _services.GetRequiredService<ResidentProcessDetector>();
+        _monitor = new(_history, _tray, taskRepo, eventRepo, capacity, settings, residentDetector);
         _monitor.Start();
     }
 
@@ -196,5 +270,52 @@ public partial class App : System.Windows.Application
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Writes unhandled exceptions to %LOCALAPPDATA%\TaskNotify\crash.log so we can
+    /// diagnose startup crashes that disappear with the window. Attached before any
+    /// DI plumbing so it survives failures in container build / window construction.
+    /// </summary>
+    private void RegisterGlobalExceptionHandlers()
+    {
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var dir = Path.Combine(root, "TaskNotify");
+        Directory.CreateDirectory(dir);
+        var logPath = Path.Combine(dir, "crash.log");
+
+        void Write(Exception ex, string source)
+        {
+            try
+            {
+                var message = $"[{DateTimeOffset.UtcNow:O}] [{source}]{Environment.NewLine}{ex}{Environment.NewLine}{new string('-', 80)}{Environment.NewLine}";
+                File.AppendAllText(logPath, message);
+            }
+            catch
+            {
+                // Last-resort: swallow. We can't let exception handling itself crash the app.
+            }
+            System.Windows.MessageBox.Show(
+                $"{source}: {ex.GetType().Name}{Environment.NewLine}{ex.Message}{Environment.NewLine}{Environment.NewLine}详细信息已写入：{logPath}",
+                "TaskNotify 启动失败",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+        }
+
+        DispatcherUnhandledException += (_, args) =>
+        {
+            Write(args.Exception, "Dispatcher");
+            args.Handled = true;
+            Shutdown(1);
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception ex) Write(ex, "AppDomain");
+        };
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            Write(args.Exception, "UnobservedTask");
+            args.SetObserved();
+        };
     }
 }

@@ -1,28 +1,111 @@
+using System.Threading.Channels;
 using TaskNotify.Core.Detection;
 using TaskNotify.Core.Events;
+using TaskNotify.Core.Interfaces;
+using TaskNotify.Core.Performance;
 
 namespace TaskNotify.Core.Tasks;
 
 public sealed record TaskCompletionNotice(Guid TaskId, string DisplayName, TimeSpan Duration, TaskState State);
 
-public sealed class ProcessTaskTracker
+public sealed class ProcessTaskTracker : IDisposable
 {
     private readonly DetectionRuleEngine _ruleEngine = new();
+    private readonly DetectionMode _detectionMode;
+    private readonly ResidentProcessDetector? _residentDetector;
     private readonly object _gate = new();
     private readonly Dictionary<int, TrackedProcess> _processes = [];
     private readonly Dictionary<string, TrackedIntegration> _integrations = new(StringComparer.OrdinalIgnoreCase);
 
-    public TaskCompletionNotice? Handle(ProcessLifecycleEvent processEvent)
+    private readonly IDetectedTaskRepository? _taskRepository;
+    private readonly IProcessEventRepository? _eventRepository;
+    private readonly CapacityGuard? _capacity;
+    private readonly Channel<DetectedTask> _taskSaveQueue;
+    private readonly Channel<ProcessEventEntry> _eventAppendQueue;
+    private readonly CancellationTokenSource _cts = new();
+    private readonly Task _taskSaveWorker;
+    private readonly Task _eventAppendWorker;
+    private bool _disposed;
+
+    public ProcessTaskTracker() : this(null, null, null, DetectionMode.Balanced, null) { }
+
+    public ProcessTaskTracker(
+        IDetectedTaskRepository? taskRepository,
+        IProcessEventRepository? eventRepository,
+        CapacityGuard? capacity = null,
+        DetectionMode detectionMode = DetectionMode.Balanced,
+        ResidentProcessDetector? residentDetector = null)
     {
+        _taskRepository = taskRepository;
+        _eventRepository = eventRepository;
+        _capacity = capacity;
+        _detectionMode = detectionMode;
+        _residentDetector = residentDetector;
+
+        _taskSaveQueue = Channel.CreateUnbounded<DetectedTask>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
+        _eventAppendQueue = Channel.CreateUnbounded<ProcessEventEntry>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
+
+        _taskSaveWorker = taskRepository is null ? Task.CompletedTask : Task.Run(TaskSaveLoopAsync);
+        _eventAppendWorker = eventRepository is null ? Task.CompletedTask : Task.Run(EventAppendLoopAsync);
+    }
+
+    public async Task<TaskCompletionNotice?> Handle(ProcessLifecycleEvent processEvent, CancellationToken cancellationToken = default)
+    {
+        TaskCompletionNotice? notice = null;
+        ProcessCandidate? candidate = null;
+
         lock (_gate)
         {
-            return processEvent switch
+            switch (processEvent)
             {
-                ProcessStartedEvent started => HandleStarted(started),
-                ProcessStoppedEvent stopped => HandleStopped(stopped),
-                _ => null
-            };
+                case ProcessStartedEvent started:
+                    HandleStarted(started);
+                    break;
+                case ProcessStoppedEvent stopped:
+                    (notice, candidate) = HandleStopped(stopped);
+                    break;
+            }
         }
+
+        if (notice is null || candidate is null)
+        {
+            return notice;
+        }
+
+        // Resident check happens outside the lock — it does DB access for the
+        // 7-day history condition (doc chapter 11.3). Per doc 28.2 if any
+        // resident condition holds we suppress the notification silently.
+        if (_residentDetector is not null)
+        {
+            try
+            {
+                var resident = await _residentDetector
+                    .EvaluateAsync(candidate, processEvent.OccurredAt, cancellationToken)
+                    .ConfigureAwait(false);
+                if (resident.IsResident)
+                {
+                    return null;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Resident check failure: don't block notification.
+            }
+        }
+
+        return notice;
     }
 
     /// <summary>
@@ -48,6 +131,7 @@ public sealed class ProcessTaskTracker
             tracked = new TrackedIntegration(integrationEvent);
             _integrations[taskKey] = tracked;
             tracked.Task.Apply(TaskSignal.Started, CompletionConfidence.IntegrationConfirmed, integrationEvent.OccurredAt);
+            EnqueueTaskSave(tracked.Task);
         }
         else
         {
@@ -73,6 +157,11 @@ public sealed class ProcessTaskTracker
         var startedAt = tracked.Task.StartedAt ?? integrationEvent.OccurredAt;
         var transitioned = tracked.Task.Apply(signal, confidence, integrationEvent.OccurredAt, integrationEvent.ExitCode);
         var duration = integrationEvent.OccurredAt - startedAt;
+
+        if (transitioned)
+        {
+            EnqueueTaskSave(tracked.Task);
+        }
 
         if (integrationEvent.Action is IntegrationTaskAction.WaitingForInput or IntegrationTaskAction.WaitingForPermission)
         {
@@ -121,6 +210,11 @@ public sealed class ProcessTaskTracker
 
     private TaskCompletionNotice? HandleStarted(ProcessStartedEvent started)
     {
+        if (_capacity is not null && !_capacity.CanAcceptProcess())
+        {
+            return null;
+        }
+
         _processes.TryGetValue(started.ParentProcessId ?? -1, out var parent);
         var candidate = new ProcessCandidate(
             started.Identity.ProcessId,
@@ -129,8 +223,14 @@ public sealed class ProcessTaskTracker
             started.ExecutablePath,
             started.CommandLine,
             started.ParentProcessName ?? parent?.Candidate.ProcessName);
-        var result = _ruleEngine.Evaluate(candidate, TimeSpan.Zero, BuiltInDetectionRules.Balanced);
+        var result = _ruleEngine.Evaluate(candidate, TimeSpan.Zero, BuiltInDetectionRules.For(_detectionMode));
         if (result.Probability == TaskProbability.Ignored)
+        {
+            return null;
+        }
+
+        var isNewGroup = parent?.Group is null;
+        if (isNewGroup && _capacity is not null && !_capacity.CanAcceptGroup())
         {
             return null;
         }
@@ -138,18 +238,32 @@ public sealed class ProcessTaskTracker
         var group = parent?.Group ?? new ProcessTaskGroup(candidate, result.Score, started.OccurredAt);
         group.Add(started.Identity);
         _processes[started.Identity.ProcessId] = new(started.Identity, candidate, group);
+
+        if (_capacity is not null)
+        {
+            _capacity.IncrementProcesses();
+            if (isNewGroup) _capacity.IncrementGroups();
+        }
+
+        if (isNewGroup)
+        {
+            EnqueueTaskSave(group.Task);
+        }
+        AppendProcessEvent(started.ProcessName, started.Identity.ProcessId, started.ParentProcessId, "Started", started.OccurredAt, group.Task.Id);
+
         return null;
     }
 
-    private TaskCompletionNotice? HandleStopped(ProcessStoppedEvent stopped)
+    private (TaskCompletionNotice?, ProcessCandidate?) HandleStopped(ProcessStoppedEvent stopped)
     {
         if (!_processes.TryGetValue(stopped.ProcessId, out var process) ||
             stopped.Identity is not null && stopped.Identity != process.Identity)
         {
-            return null;
+            return (null, null);
         }
 
         _processes.Remove(stopped.ProcessId);
+        _capacity?.DecrementProcesses();
 
         process.Group.Remove(process.Identity);
         if (process.Identity.ProcessId == process.Group.RootProcessId)
@@ -157,20 +271,107 @@ public sealed class ProcessTaskTracker
             process.Group.RootEnded = true;
         }
 
+        AppendProcessEvent(stopped.ProcessName, stopped.ProcessId, null, "Stopped", stopped.OccurredAt, process.Group.Task.Id);
+
         if (!process.Group.RootEnded || process.Group.HasRunningProcesses)
         {
-            return null;
+            return (null, null);
         }
 
+        // Group fully drained — release the group slot.
+        _capacity?.DecrementGroups();
+
         var duration = stopped.OccurredAt - process.Group.StartedAt;
-        var result = _ruleEngine.Evaluate(process.Group.RootCandidate, duration, BuiltInDetectionRules.Balanced);
+        var result = _ruleEngine.Evaluate(process.Group.RootCandidate, duration, BuiltInDetectionRules.For(_detectionMode));
         process.Group.Task.SetTaskProbability(result.Score);
         process.Group.Task.Apply(TaskSignal.ProcessEnded, CompletionConfidence.ProcessEnded, stopped.OccurredAt);
+        EnqueueTaskSave(process.Group.Task);
 
         return result.ShouldNotify
-            ? new(process.Group.Task.Id, process.Group.Task.DisplayName, duration, process.Group.Task.State)
-            : null;
+            ? (new(process.Group.Task.Id, process.Group.Task.DisplayName, duration, process.Group.Task.State), process.Group.RootCandidate)
+            : (null, process.Group.RootCandidate);
     }
+
+    private void EnqueueTaskSave(DetectedTask task)
+    {
+        if (_taskRepository is null) return;
+        // Snapshot current state so later mutations don't bleed into this queued save.
+        _taskSaveQueue.Writer.TryWrite(task.Clone());
+    }
+
+    private void AppendProcessEvent(
+        string processName,
+        int processId,
+        int? parentProcessId,
+        string eventType,
+        DateTimeOffset eventTime,
+        Guid? taskId)
+    {
+        if (_eventRepository is null) return;
+        _eventAppendQueue.Writer.TryWrite(new ProcessEventEntry(
+            processId, parentProcessId, processName, eventType, eventTime, taskId));
+    }
+
+    private async Task TaskSaveLoopAsync()
+    {
+        try
+        {
+            await foreach (var task in _taskSaveQueue.Reader.ReadAllAsync(_cts.Token))
+            {
+                try { await _taskRepository!.SaveAsync(task, _cts.Token); }
+                catch (OperationCanceledException) when (_cts.IsCancellationRequested) { throw; }
+                catch { /* persistence failure is non-fatal */ }
+            }
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { }
+    }
+
+    private async Task EventAppendLoopAsync()
+    {
+        try
+        {
+            await foreach (var entry in _eventAppendQueue.Reader.ReadAllAsync(_cts.Token))
+            {
+                try
+                {
+                    await _eventRepository!.AppendAsync(
+                        entry.ProcessId,
+                        entry.ParentProcessId,
+                        entry.ProcessName,
+                        entry.EventType,
+                        entry.EventTime,
+                        entry.TaskId,
+                        _cts.Token);
+                }
+                catch (OperationCanceledException) when (_cts.IsCancellationRequested) { throw; }
+                catch { /* event log failure is non-fatal */ }
+            }
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        _taskSaveQueue.Writer.TryComplete();
+        _eventAppendQueue.Writer.TryComplete();
+
+        try { _taskSaveWorker.Wait(TimeSpan.FromSeconds(2)); } catch { }
+        try { _eventAppendWorker.Wait(TimeSpan.FromSeconds(2)); } catch { }
+
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+
+    private sealed record ProcessEventEntry(
+        int ProcessId,
+        int? ParentProcessId,
+        string ProcessName,
+        string EventType,
+        DateTimeOffset EventTime,
+        Guid? TaskId);
 
     private sealed record TrackedProcess(ProcessIdentity Identity, ProcessCandidate Candidate, ProcessTaskGroup Group);
 
@@ -182,7 +383,9 @@ public sealed class ProcessTaskTracker
             InitialEvent.DisplayName ?? "Integration Task",
             100,
             InitialEvent.OccurredAt,
-            InitialEvent.ExitCode);
+            InitialEvent.ExitCode,
+            workingDirectory: InitialEvent.WorkingDir,
+            correlationKey: InitialEvent.TaskId);
     }
 
     private sealed class ProcessTaskGroup
@@ -194,7 +397,7 @@ public sealed class ProcessTaskTracker
             RootCandidate = rootCandidate;
             RootProcessId = rootCandidate.ProcessId;
             StartedAt = startedAt;
-            Task = new(Guid.NewGuid(), "WMI", rootCandidate.ProcessName, probability, startedAt, rootCandidate.ProcessId);
+            Task = new(Guid.NewGuid(), "WMI", rootCandidate.ProcessName, probability, startedAt, rootCandidate.ProcessId, processName: rootCandidate.ProcessName);
             Task.Apply(TaskSignal.Started, CompletionConfidence.Unknown, startedAt);
         }
 

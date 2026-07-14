@@ -1,0 +1,38 @@
+<UserControl x:Class="TaskNotify.Desktop.Views.DetectionSettingsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:detection="clr-namespace:TaskNotify.Core.Detection;assembly=TaskNotify.Core">
+    <Border Background="{DynamicResource {x:Static SystemColors.ControlLightLightBrushKey}}"
+            CornerRadius="6" Padding="24,18">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="检测模式" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
+                <RadioButton Content="精确 — 仅 Hook 触发的任务通知；无误报。"
+                             Margin="0,4"
+                             IsChecked="{Binding SelectedMode, Converter={StaticResource EnumToBoolConverter}, ConverterParameter={x:Static detection:DetectionMode.Precise}, Mode=TwoWay}" />
+                <RadioButton Content="平衡 (推荐) — Hook 加 WMI 短名单，多数构建/数据任务可识别。"
+                             Margin="0,4"
+                             IsChecked="{Binding SelectedMode, Converter={StaticResource EnumToBoolConverter}, ConverterParameter={x:Static detection:DetectionMode.Balanced}, Mode=TwoWay}" />
+                <RadioButton Content="广泛 — 平衡 + 文件/CPU 推测 + 更多候选进程；可能误报。"
+                             Margin="0,4"
+                             IsChecked="{Binding SelectedMode, Converter={StaticResource EnumToBoolConverter}, ConverterParameter={x:Static detection:DetectionMode.Broad}, Mode=TwoWay}" />
+
+                <TextBlock Text="检测来源" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,8" />
+                <ItemsControl ItemsSource="{Binding Sources}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <CheckBox Content="{Binding DisplayName}"
+                                      Margin="0,4"
+                                      IsChecked="{Binding Enabled, Mode=TwoWay}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Margin="0,24,0,0"
+                           FontSize="11"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           Text="更改立即生效并写入 settings.json。" />
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</UserControl>

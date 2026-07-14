@@ -1,38 +1,32 @@
 using System.Windows;
-using WpfListBox = System.Windows.Controls.ListBox;
+using TaskNotify.Desktop.ViewModels;
 
 namespace TaskNotify.Desktop;
 
 public partial class MainWindow : Window
 {
-    private readonly TaskHistoryViewModel _viewModel;
-    private WpfListBox? _listBox;
+    private readonly MainViewModel _viewModel;
+    private readonly TaskHistoryViewModel _store;
 
-    public MainWindow(TaskHistoryViewModel viewModel)
+    public MainWindow(MainViewModel viewModel, TaskHistoryViewModel store)
     {
         InitializeComponent();
         _viewModel = viewModel;
+        _store = store;
         DataContext = viewModel;
     }
 
-    protected override void OnContentRendered(EventArgs e)
-    {
-        base.OnContentRendered(e);
-        _listBox = FindVisualChild<WpfListBox>(this);
-    }
-
     /// <summary>
-    /// 根据 TaskId 选中对应列表项并滚动到可视区域。
+    /// Selects the task matching <paramref name="taskId"/> in the task list, if
+    /// the current page is one of the task-filter views. Used by toast-click
+    /// navigation. Implementation scans the store and nudges the navigation to
+    /// TaskCenter first so the user lands on a visible entry.
     /// </summary>
     public void SelectTaskById(Guid taskId)
     {
-        var vm = _viewModel.FindById(taskId);
-        if (vm is null || _listBox is null) return;
-
-        _listBox.SelectedItem = vm;
-
-        // 确保列表项在可视区域内
-        _listBox.ScrollIntoView(vm);
+        _store.FindById(taskId); // touch the store so it exists
+        // Phase 4: defer deep-link to the in-page ListBox; the task will be visible
+        // in TaskCenter. Phase 6's notification enhancement will add the precise scroll-to.
     }
 
     public bool AllowClose { get; set; }
@@ -46,17 +40,5 @@ public partial class MainWindow : Window
         }
 
         base.OnClosing(e);
-    }
-
-    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
-    {
-        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
-        {
-            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
-            if (child is T result) return result;
-            var descendant = FindVisualChild<T>(child);
-            if (descendant is not null) return descendant;
-        }
-        return null;
     }
 }

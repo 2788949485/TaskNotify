@@ -4,7 +4,12 @@
       "Bash(dotnet build *)",
       "Bash(dotnet test *)",
       "Bash(tasklist)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(dotnet new *)",
+      "Bash(dotnet sln *)",
+      "Bash(dotnet restore *)",
+      "Bash(taskkill /PID 6388 /F)",
+      "Bash(powershell -Command \"Stop-Process -Name TaskNotify -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1\")"
     ]
   }
 }

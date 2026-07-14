@@ -1,9 +1,14 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Data;
 using TaskNotify.Core.Tasks;
 
 namespace TaskNotify.Desktop;
 
+/// <summary>
+/// In-memory observable store for task completion notices. Serves as the single
+/// source of truth that page view models filter and project into their own views.
+/// </summary>
 public sealed class TaskHistoryViewModel
 {
     public string RuntimeStatus { get; } = $"运行文件：{Environment.ProcessPath}";
@@ -12,8 +17,22 @@ public sealed class TaskHistoryViewModel
 
     public void Add(TaskCompletionNotice notice)
     {
-        var vm = new TaskCompletionNoticeViewModel(notice.TaskId, notice.DisplayName, $"用时 {notice.Duration:mm\\:ss} · {GetStateText(notice.State)}");
-        Completed.Insert(0, vm);
+        var vm = new TaskCompletionNoticeViewModel(
+            notice.TaskId,
+            notice.DisplayName,
+            $"用时 {notice.Duration:mm\\:ss} · {GetStateText(notice.State)}",
+            notice.State);
+        // Marshal to UI thread — Add can be called from the monitor's dispatcher post
+        // but also from test/notification paths that aren't on the UI thread.
+        var app = System.Windows.Application.Current;
+        if (app?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(() => Completed.Insert(0, vm)));
+        }
+        else
+        {
+            Completed.Insert(0, vm);
+        }
     }
 
     private static string GetStateText(TaskState state) => state switch
@@ -44,4 +63,8 @@ public sealed class TaskHistoryViewModel
     }
 }
 
-public sealed record TaskCompletionNoticeViewModel(Guid TaskId, string DisplayName, string Summary);
+public sealed record TaskCompletionNoticeViewModel(
+    Guid TaskId,
+    string DisplayName,
+    string Summary,
+    TaskState State);
