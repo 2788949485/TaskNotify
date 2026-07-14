@@ -47,3 +47,7 @@ runtime_cache/
 
 # Local development overrides
 local.*.json
+
+# Project-local documentation (not for remote)
+AGENTS.md
+TaskNotify 全自动任务完成通知程序开发文档.md
