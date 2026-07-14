@@ -9,9 +9,13 @@ namespace TaskNotify.ProcessMonitor;
 public sealed class WmiProcessMonitor
 {
     private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(5);
+    private readonly Action<Exception>? _reportSessionFault;
+    private readonly Action? _reportSessionStarted;
 
-    public WmiProcessMonitor()
+    public WmiProcessMonitor(Action<Exception>? reportSessionFault = null, Action? reportSessionStarted = null)
     {
+        _reportSessionFault = reportSessionFault;
+        _reportSessionStarted = reportSessionStarted;
     }
 
     public async Task RunAsync(
@@ -24,7 +28,7 @@ public sealed class WmiProcessMonitor
         {
             try
             {
-                await RunSessionAsync(handleEvent, cancellationToken).ConfigureAwait(false);
+                await RunSessionAsync(handleEvent, _reportSessionStarted, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -32,6 +36,7 @@ public sealed class WmiProcessMonitor
             }
             catch (Exception exception)
             {
+                _reportSessionFault?.Invoke(exception);
                 try
                 {
                     await Task.Delay(RestartDelay, cancellationToken).ConfigureAwait(false);
@@ -46,6 +51,7 @@ public sealed class WmiProcessMonitor
 
     private static async Task RunSessionAsync(
         Func<ProcessLifecycleEvent, CancellationToken, ValueTask> handleEvent,
+        Action? reportSessionStarted,
         CancellationToken cancellationToken)
     {
         var events = Channel.CreateBounded<ProcessLifecycleEvent>(new BoundedChannelOptions(1024)
@@ -55,6 +61,11 @@ public sealed class WmiProcessMonitor
         });
         using var sessionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var activeProcesses = new ConcurrentDictionary<int, ProcessIdentity>();
+        var observedStarts = new ConcurrentDictionary<int, byte>();
+        var observedStops = new ConcurrentDictionary<int, byte>();
+        var probeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probeStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probeProcessId = 0;
         Exception? stoppedException = null;
         using var started = CreateWatcher("SELECT * FROM Win32_ProcessStartTrace");
         using var stopped = CreateWatcher("SELECT * FROM Win32_ProcessStopTrace");
@@ -62,12 +73,16 @@ public sealed class WmiProcessMonitor
         started.EventArrived += (_, args) =>
         {
             var processEvent = WmiProcessEventMapper.Started(args.NewEvent);
+            observedStarts.TryAdd(processEvent.Identity.ProcessId, 0);
+            if (processEvent.Identity.ProcessId == Volatile.Read(ref probeProcessId)) probeStarted.TrySetResult();
             activeProcesses[processEvent.Identity.ProcessId] = processEvent.Identity;
             _ = events.Writer.TryWrite(processEvent);
         };
         stopped.EventArrived += (_, args) =>
         {
             var processEvent = WmiProcessEventMapper.Stopped(args.NewEvent);
+            observedStops.TryAdd(processEvent.ProcessId, 0);
+            if (processEvent.ProcessId == Volatile.Read(ref probeProcessId)) probeStopped.TrySetResult();
             activeProcesses.TryRemove(processEvent.ProcessId, out var identity);
             _ = events.Writer.TryWrite(processEvent with { Identity = identity });
         };
@@ -83,6 +98,22 @@ public sealed class WmiProcessMonitor
         {
             started.Start();
             stopped.Start();
+            using (var probe = Process.Start(new ProcessStartInfo(
+                Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", "/d /c exit 0")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            }) ?? throw new InvalidOperationException("无法启动 WMI 事件流自检进程。"))
+            {
+                Volatile.Write(ref probeProcessId, probe.Id);
+                if (observedStarts.ContainsKey(probe.Id)) probeStarted.TrySetResult();
+                if (observedStops.ContainsKey(probe.Id)) probeStopped.TrySetResult();
+                await Task.WhenAll(probeStarted.Task, probeStopped.Task)
+                    .WaitAsync(TimeSpan.FromSeconds(3), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            reportSessionStarted?.Invoke();
             await foreach (var processEvent in events.Reader.ReadAllAsync(sessionCancellation.Token).ConfigureAwait(false))
             {
                 var enrichedEvent = processEvent is ProcessStartedEvent startedEvent

@@ -5,17 +5,113 @@ public sealed record TaskCompletionNotice(Guid TaskId, string DisplayName, TimeS
 public sealed class ProcessTaskTracker
 {
     private readonly DetectionRuleEngine _ruleEngine = new();
+    private readonly object _gate = new();
     private readonly Dictionary<int, TrackedProcess> _processes = [];
+    private readonly Dictionary<string, TrackedIntegration> _integrations = new(StringComparer.OrdinalIgnoreCase);
 
     public TaskCompletionNotice? Handle(ProcessLifecycleEvent processEvent)
     {
-        return processEvent switch
+        lock (_gate)
         {
-            ProcessStartedEvent started => HandleStarted(started),
-            ProcessStoppedEvent stopped => HandleStopped(stopped),
-            _ => null
-        };
+            return processEvent switch
+            {
+                ProcessStartedEvent started => HandleStarted(started),
+                ProcessStoppedEvent stopped => HandleStopped(stopped),
+                _ => null
+            };
+        }
     }
+
+    /// <summary>
+    /// Handles a standardized integration event (Claude Code, Codex, Hermes, etc.).
+    /// Creates or updates a tracked integration task, transitions state,
+    /// and produces a completion notice when the task reaches a terminal state.
+    /// </summary>
+    public TaskCompletionNotice? Handle(IntegrationTaskEvent integrationEvent)
+    {
+        ArgumentNullException.ThrowIfNull(integrationEvent);
+        lock (_gate)
+        {
+            return HandleIntegration(integrationEvent);
+        }
+    }
+
+    private TaskCompletionNotice? HandleIntegration(IntegrationTaskEvent integrationEvent)
+    {
+        var taskKey = integrationEvent.TaskId ?? $"{integrationEvent.Source}:{integrationEvent.DisplayName}";
+
+        if (!_integrations.TryGetValue(taskKey, out var tracked))
+        {
+            tracked = new TrackedIntegration(integrationEvent);
+            _integrations[taskKey] = tracked;
+            tracked.Task.Apply(TaskSignal.Started, CompletionConfidence.IntegrationConfirmed, integrationEvent.OccurredAt);
+        }
+        else
+        {
+            // Update display name if this is richer
+            if (integrationEvent.DisplayName is not null && integrationEvent.DisplayName != tracked.Task.DisplayName)
+            {
+                tracked.Task.SetDisplayName(integrationEvent.DisplayName);
+            }
+        }
+
+        var signal = MapActionToIntegrationSignal(integrationEvent.Action);
+        var confidence = integrationEvent.Action switch
+        {
+            IntegrationTaskAction.Succeeded or IntegrationTaskAction.Failed or
+            IntegrationTaskAction.Cancelled or IntegrationTaskAction.TimedOut
+                => CompletionConfidence.IntegrationConfirmed,
+            IntegrationTaskAction.EndedUnknown => CompletionConfidence.ProcessEnded,
+            IntegrationTaskAction.WaitingForInput or IntegrationTaskAction.WaitingForPermission
+                => CompletionConfidence.Inferred,
+            _ => CompletionConfidence.Unknown
+        };
+
+        var startedAt = tracked.Task.StartedAt ?? integrationEvent.OccurredAt;
+        var transitioned = tracked.Task.Apply(signal, confidence, integrationEvent.OccurredAt, integrationEvent.ExitCode);
+        var duration = integrationEvent.OccurredAt - startedAt;
+
+        if (transitioned && integrationEvent.Action is IntegrationTaskAction.WaitingForInput or IntegrationTaskAction.WaitingForPermission)
+        {
+            return new(tracked.Task.Id, tracked.Task.DisplayName, duration, tracked.Task.State);
+        }
+
+        if (transitioned && TaskStateMachine.IsTerminal(tracked.Task.State))
+        {
+            if (integrationEvent.Source.Equals("powershell", StringComparison.OrdinalIgnoreCase) &&
+                tracked.Task.State != TaskState.Failed &&
+                duration < TimeSpan.FromSeconds(20))
+            {
+                _integrations.Remove(taskKey);
+                return null;
+            }
+
+            var notice = new TaskCompletionNotice(
+                tracked.Task.Id,
+                tracked.Task.DisplayName,
+                duration,
+                tracked.Task.State);
+
+            _integrations.Remove(taskKey);
+
+            return notice;
+        }
+
+        return null;
+    }
+
+    private static TaskSignal MapActionToIntegrationSignal(IntegrationTaskAction action) => action switch
+    {
+        IntegrationTaskAction.Started => TaskSignal.Started,
+        IntegrationTaskAction.Succeeded => TaskSignal.Succeeded,
+        IntegrationTaskAction.Failed => TaskSignal.Failed,
+        IntegrationTaskAction.WaitingForInput => TaskSignal.WaitingForInput,
+        IntegrationTaskAction.WaitingForPermission => TaskSignal.WaitingForPermission,
+        IntegrationTaskAction.Cancelled => TaskSignal.Cancelled,
+        IntegrationTaskAction.TimedOut => TaskSignal.TimedOut,
+        IntegrationTaskAction.EndedUnknown => TaskSignal.ProcessEnded,
+        _ => TaskSignal.Started
+    };
 
     private TaskCompletionNotice? HandleStarted(ProcessStartedEvent started)
     {
@@ -71,6 +167,17 @@ public sealed class ProcessTaskTracker
     }
 
     private sealed record TrackedProcess(ProcessIdentity Identity, ProcessCandidate Candidate, ProcessTaskGroup Group);
+
+    private sealed record TrackedIntegration(IntegrationTaskEvent InitialEvent)
+    {
+        public DetectedTask Task { get; } = new(
+            Guid.NewGuid(),
+            InitialEvent.Source,
+            InitialEvent.DisplayName ?? "Integration Task",
+            100,
+            InitialEvent.OccurredAt,
+            InitialEvent.ExitCode);
+    }
 
     private sealed class ProcessTaskGroup
     {

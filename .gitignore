@@ -1,4 +1,49 @@
-.dotnet/
+# Build outputs
 **/bin/
 **/obj/
+*.dll
+*.exe
+*.pdb
+*.cache
 
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets and credentials
+.env
+*.env
+*.key
+*.pem
+secrets.json
+settings.json
+*.bak.*
+*.before-tasknotify.bak
+
+# Claude Code internal files
+~/.claude/
+*.jsonl
+stats-cache.json
+history.jsonl
+
+# Node modules
+node_modules/
+
+# Runtime cache
+runtime_cache/
+
+# Temporary files
+*.tmp.*
+*.log
+
+# Local development overrides
+local.*.json

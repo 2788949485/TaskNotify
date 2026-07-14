@@ -20,7 +20,7 @@ public sealed class DetectedTask
 
     public Guid Id { get; }
     public string Source { get; }
-    public string DisplayName { get; }
+    public string DisplayName { get; private set; }
     public int TaskProbability { get; private set; }
     public CompletionConfidence CompletionConfidence { get; private set; }
     public TaskState State { get; private set; } = TaskState.Candidate;
@@ -58,6 +58,8 @@ public sealed class DetectedTask
     public void SetCommandSummary(string? commandSummary) => CommandSummary = CommandSanitizer.Sanitize(commandSummary);
 
     public void SetTaskProbability(int taskProbability) => TaskProbability = taskProbability;
+
+    public void SetDisplayName(string displayName) => DisplayName = displayName;
 
     private static CompletionConfidence Max(CompletionConfidence left, CompletionConfidence right) =>
         left >= right ? left : right;

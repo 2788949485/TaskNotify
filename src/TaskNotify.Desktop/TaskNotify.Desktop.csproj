@@ -2,7 +2,11 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -13,5 +17,25 @@
     <ProjectReference Include="..\TaskNotify.Core\TaskNotify.Core.csproj" />
     <ProjectReference Include="..\TaskNotify.ProcessMonitor\TaskNotify.ProcessMonitor.csproj" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250310001" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TaskNotify.Integrations\TaskNotify.Integrations.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\TaskNotify.Integrations\PowerShell\TaskNotify.psm1" Link="integrations\PowerShell\TaskNotify.psm1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\TaskNotify.Integrations\Claude\hook-receiver.js" Link="integrations\Claude\hook-receiver.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\TaskNotify.Integrations\Codex\hook-receiver.js" Link="integrations\Codex\hook-receiver.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\TaskNotify.Integrations\Hermes\hook-receiver.js" Link="integrations\Hermes\hook-receiver.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

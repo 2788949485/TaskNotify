@@ -103,6 +103,55 @@ public sealed class CoreBehaviorTests
         Assert.Null(tracker.Handle(new ProcessStoppedEvent(100, "python.exe", replacement.StartedAt.AddSeconds(30), first)));
     }
 
+    [Fact]
+    public void Integration_waiting_for_permission_notifies_without_ending_the_task()
+    {
+        var tracker = new ProcessTaskTracker();
+        var startedAt = DateTimeOffset.UtcNow;
+
+        tracker.Handle(new IntegrationTaskEvent("codex", "task-1", "Codex", null, startedAt, IntegrationTaskAction.Started, null, null));
+        var notice = tracker.Handle(new IntegrationTaskEvent("codex", "task-1", "Codex", null, startedAt.AddSeconds(1), IntegrationTaskAction.WaitingForPermission, null, null));
+
+        Assert.NotNull(notice);
+        Assert.Equal(TaskState.WaitingForPermission, notice.State);
+    }
+
+    [Fact]
+    public void Integration_failure_without_a_started_event_notifies_as_failed()
+    {
+        var tracker = new ProcessTaskTracker();
+
+        var notice = tracker.Handle(new IntegrationTaskEvent("claude", "task-1", "Claude", null, DateTimeOffset.UtcNow, IntegrationTaskAction.Failed, null, 1));
+
+        Assert.NotNull(notice);
+        Assert.Equal(TaskState.Failed, notice.State);
+    }
+
+    [Fact]
+    public void Short_successful_powershell_command_does_not_notify()
+    {
+        var tracker = new ProcessTaskTracker();
+        var startedAt = DateTimeOffset.UtcNow;
+
+        tracker.Handle(new IntegrationTaskEvent("powershell", "task-1", "git", null, startedAt, IntegrationTaskAction.Started, null, null));
+        var notice = tracker.Handle(new IntegrationTaskEvent("powershell", "task-1", "git", null, startedAt.AddSeconds(1), IntegrationTaskAction.Succeeded, null, 0));
+
+        Assert.Null(notice);
+    }
+
+    [Fact]
+    public void Long_powershell_command_without_exit_code_notifies_as_unknown()
+    {
+        var tracker = new ProcessTaskTracker();
+        var startedAt = DateTimeOffset.UtcNow;
+
+        tracker.Handle(new IntegrationTaskEvent("powershell", "task-1", "python", null, startedAt, IntegrationTaskAction.Started, null, null));
+        var notice = tracker.Handle(new IntegrationTaskEvent("powershell", "task-1", "python", null, startedAt.AddSeconds(20), IntegrationTaskAction.EndedUnknown, null, null));
+
+        Assert.NotNull(notice);
+        Assert.Equal(TaskState.EndedUnknown, notice.State);
+    }
+
     [Theory]
     [InlineData("python upload.py --token abc", "python upload.py --token ***")]
     [InlineData("OPENAI_API_KEY=secret python run.py", "OPENAI_API_KEY=*** python run.py")]
