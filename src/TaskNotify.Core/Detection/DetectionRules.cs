@@ -52,7 +52,8 @@ public sealed class DetectionRuleEngine
         ProcessCandidate candidate,
         TimeSpan runningFor,
         IEnumerable<DetectionRule> builtInRules,
-        IEnumerable<DetectionRule>? userRules = null)
+        IEnumerable<DetectionRule>? userRules = null,
+        IReadOnlyDictionary<string, int>? thresholdOverrides = null)
     {
         var matched = new List<string>();
         var score = 0;
@@ -95,7 +96,7 @@ public sealed class DetectionRuleEngine
             score += rule.ScoreAdjustment;
         }
 
-        return new(ToProbability(score), score, isResident, runningFor >= NotificationThreshold.For(candidate.ProcessName), matched);
+        return new(ToProbability(score), score, isResident, runningFor >= NotificationThreshold.For(candidate.ProcessName, thresholdOverrides), matched);
     }
 
     public static bool IsValid(DetectionRule rule) => Patterns(rule).All(IsValidPattern);
@@ -143,12 +144,32 @@ public sealed class DetectionRuleEngine
 
 public static class NotificationThreshold
 {
-    public static TimeSpan For(string processName) => processName.ToLowerInvariant() switch
+    public static TimeSpan For(string processName) => For(processName, null);
+
+    /// <summary>
+    /// Resolves the minimum-running duration before a notification fires for this
+    /// process. If <paramref name="overrides"/> contains a positive entry for the
+    /// process (lower-cased, with or without extension), it takes precedence over
+    /// the built-in defaults.
+    /// </summary>
+    public static TimeSpan For(string processName, IReadOnlyDictionary<string, int>? overrides)
     {
-        "ffmpeg.exe" => TimeSpan.FromSeconds(10),
-        "python.exe" or "pythonw.exe" or "py.exe" or "node.exe" or "npm.exe" or "npm.cmd" or "pnpm.exe" or "pnpm.cmd" or "yarn.exe" or "yarn.cmd" => TimeSpan.FromSeconds(20),
-        _ => TimeSpan.FromSeconds(60)
-    };
+        if (overrides is not null && overrides.Count > 0)
+        {
+            var key = processName.ToLowerInvariant();
+            if (overrides.TryGetValue(key, out var seconds) && seconds > 0)
+            {
+                return TimeSpan.FromSeconds(seconds);
+            }
+        }
+
+        return processName.ToLowerInvariant() switch
+        {
+            "ffmpeg.exe" => TimeSpan.FromSeconds(10),
+            "python.exe" or "pythonw.exe" or "py.exe" or "node.exe" or "npm.exe" or "npm.cmd" or "pnpm.exe" or "pnpm.cmd" or "yarn.exe" or "yarn.cmd" => TimeSpan.FromSeconds(20),
+            _ => TimeSpan.FromSeconds(60)
+        };
+    }
 }
 
 public static class BuiltInDetectionRules

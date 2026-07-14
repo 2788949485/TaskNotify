@@ -42,6 +42,21 @@ public sealed partial class MainViewModel : ObservableObject
         NavigateTo(value);
     }
 
+    /// <summary>
+    /// Navigates to the task center and selects the given task. Used by toast
+    /// click-through so the user lands on the row that produced the notification.
+    /// </summary>
+    public void SelectTaskInCenter(Guid taskId)
+    {
+        var center = MenuItems.FirstOrDefault(m => m.ViewModelType == typeof(TaskCenterViewModel));
+        if (center is not null) SelectedMenu = center;
+
+        var vm = _services.GetService<TaskCenterViewModel>();
+        if (vm is null) return;
+        Navigation.Navigate(vm);
+        vm.SelectTaskById(taskId);
+    }
+
     private void SelectFirst()
     {
         if (MenuItems.Count > 0) SelectedMenu = MenuItems[0];
@@ -65,3 +80,4 @@ public sealed partial class MainViewModel : ObservableObject
         Navigation.Navigate(vm);
     }
 }
+

@@ -6,10 +6,13 @@ using Microsoft.Windows.AppNotifications;
 using TaskNotify.Core.Detection;
 using TaskNotify.Core.Interfaces;
 using TaskNotify.Core.Learning;
+using TaskNotify.Core.Notifications;
 using TaskNotify.Core.Performance;
 using TaskNotify.Core.Recovery;
 using TaskNotify.Core.Tasks;
+using TaskNotify.Desktop.Notifications;
 using TaskNotify.Infrastructure;
+using TaskNotify.Infrastructure.Email;
 using TaskNotify.Infrastructure.Settings;
 using TaskNotify.Infrastructure.SystemInfo;
 using TaskNotify.Integrations.Claude;
@@ -26,6 +29,8 @@ public partial class App : System.Windows.Application
     private TaskHistoryViewModel? _history;
     private TaskMonitorService? _monitor;
     private TrayIconService? _tray;
+    private NotificationActionHandlers? _actionHandlers;
+    private NotificationDispatcher? _dispatcher;
     private bool _notificationsRegistered;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -63,6 +68,9 @@ public partial class App : System.Windows.Application
         services.AddSingleton<IIntegrationRepository, Infrastructure.Repositories.IntegrationRepository>();
         services.AddSingleton<JsonSettingsStore>();
         services.AddSingleton<AppSettingsStore>();
+        services.AddSingleton<IUserSettingsOverrides>(sp => sp.GetRequiredService<AppSettingsStore>());
+        services.AddSingleton<EmailSettingsStore>();
+        services.AddSingleton<EmailNotifier>();
         services.AddSingleton<ISystemBootProvider, SystemBootProvider>();
         services.AddSingleton<ResidentProcessDetector>();
         services.AddSingleton<LearningActions>();
@@ -119,13 +127,22 @@ public partial class App : System.Windows.Application
         var capacity = _services.GetRequiredService<CapacityGuard>();
         var settings = _services.GetRequiredService<AppSettingsStore>();
         var residentDetector = _services.GetRequiredService<ResidentProcessDetector>();
+        _actionHandlers = new(_services, _services.GetRequiredService<ILogger<NotificationActionHandlers>>());
+        _dispatcher = new(
+            _tray,
+            _actionHandlers,
+            settings,
+            _services.GetRequiredService<ILogger<NotificationDispatcher>>(),
+            _services.GetRequiredService<EmailNotifier>());
         _monitor = new(_history, _tray, taskRepo, eventRepo, capacity, settings, residentDetector);
+        _monitor.NoticeDispatched = notice => _dispatcher.Offer(notice);
         _monitor.Start();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
         _monitor?.Stop();
+        _dispatcher?.Dispose();
         _tray?.Dispose();
         _services?.Dispose();
         if (_notificationsRegistered) AppNotificationManager.Default.Unregister();
@@ -243,11 +260,17 @@ public partial class App : System.Windows.Application
         {
             AppNotificationManager.Default.NotificationInvoked += (_, args) =>
             {
-                var taskId = ParseTaskId(args.Argument);
-                if (taskId is not null)
+                var (action, taskId) = ParseArguments(args.Argument);
+                if (taskId is null) return;
+                Dispatcher.BeginInvoke(() =>
                 {
-                    Dispatcher.BeginInvoke(() => OnNoticeClicked(taskId.Value));
-                }
+                    if (action is null || action == NotificationAction.Open)
+                    {
+                        OnNoticeClicked(taskId.Value);
+                        return;
+                    }
+                    _actionHandlers?.Dispatch(action.Value, taskId.Value);
+                });
             };
             AppNotificationManager.Default.Register();
             _notificationsRegistered = true;
@@ -258,18 +281,18 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private static Guid? ParseTaskId(string arguments)
+    private static (NotificationAction? action, Guid? taskId) ParseArguments(string arguments)
     {
+        NotificationAction? action = null;
+        Guid? taskId = null;
         foreach (var argument in arguments.Split('&'))
         {
             var pair = argument.Split('=', 2);
-            if (pair.Length == 2 && pair[0] == "taskId" && Guid.TryParse(pair[1], out var taskId))
-            {
-                return taskId;
-            }
+            if (pair.Length != 2) continue;
+            if (pair[0] == "taskId" && Guid.TryParse(pair[1], out var id)) taskId = id;
+            if (pair[0] == "action" && Enum.TryParse<NotificationAction>(pair[1], out var a)) action = a;
         }
-
-        return null;
+        return (action, taskId);
     }
 
     /// <summary>

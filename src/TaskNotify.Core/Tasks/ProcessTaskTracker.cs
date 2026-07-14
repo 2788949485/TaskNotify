@@ -6,13 +6,23 @@ using TaskNotify.Core.Performance;
 
 namespace TaskNotify.Core.Tasks;
 
-public sealed record TaskCompletionNotice(Guid TaskId, string DisplayName, TimeSpan Duration, TaskState State);
+public sealed record TaskCompletionNotice(
+    Guid TaskId,
+    string DisplayName,
+    TimeSpan Duration,
+    TaskState State,
+    string? ProcessName = null,
+    string? WorkingDirectory = null,
+    string? OpenPath = null,
+    string? LogPath = null,
+    string? ResultMessage = null);
 
 public sealed class ProcessTaskTracker : IDisposable
 {
     private readonly DetectionRuleEngine _ruleEngine = new();
     private readonly DetectionMode _detectionMode;
     private readonly ResidentProcessDetector? _residentDetector;
+    private readonly IReadOnlyDictionary<string, int>? _thresholdOverrides;
     private readonly object _gate = new();
     private readonly Dictionary<int, TrackedProcess> _processes = [];
     private readonly Dictionary<string, TrackedIntegration> _integrations = new(StringComparer.OrdinalIgnoreCase);
@@ -27,20 +37,22 @@ public sealed class ProcessTaskTracker : IDisposable
     private readonly Task _eventAppendWorker;
     private bool _disposed;
 
-    public ProcessTaskTracker() : this(null, null, null, DetectionMode.Balanced, null) { }
+    public ProcessTaskTracker() : this(null, null, null, DetectionMode.Balanced, null, null) { }
 
     public ProcessTaskTracker(
         IDetectedTaskRepository? taskRepository,
         IProcessEventRepository? eventRepository,
         CapacityGuard? capacity = null,
         DetectionMode detectionMode = DetectionMode.Balanced,
-        ResidentProcessDetector? residentDetector = null)
+        ResidentProcessDetector? residentDetector = null,
+        IReadOnlyDictionary<string, int>? thresholdOverrides = null)
     {
         _taskRepository = taskRepository;
         _eventRepository = eventRepository;
         _capacity = capacity;
         _detectionMode = detectionMode;
         _residentDetector = residentDetector;
+        _thresholdOverrides = thresholdOverrides;
 
         _taskSaveQueue = Channel.CreateUnbounded<DetectedTask>(new UnboundedChannelOptions
         {
@@ -185,7 +197,12 @@ public sealed class ProcessTaskTracker : IDisposable
                 tracked.Task.Id,
                 tracked.Task.DisplayName,
                 duration,
-                tracked.Task.State);
+                tracked.Task.State,
+                tracked.Task.ProcessName,
+                tracked.Task.WorkingDirectory,
+                tracked.Task.OpenPath,
+                tracked.Task.LogPath,
+                tracked.Task.ResultMessage);
 
             _integrations.Remove(taskKey);
 
@@ -223,7 +240,7 @@ public sealed class ProcessTaskTracker : IDisposable
             started.ExecutablePath,
             started.CommandLine,
             started.ParentProcessName ?? parent?.Candidate.ProcessName);
-        var result = _ruleEngine.Evaluate(candidate, TimeSpan.Zero, BuiltInDetectionRules.For(_detectionMode));
+        var result = _ruleEngine.Evaluate(candidate, TimeSpan.Zero, BuiltInDetectionRules.For(_detectionMode), null, _thresholdOverrides);
         if (result.Probability == TaskProbability.Ignored)
         {
             return null;
@@ -282,7 +299,7 @@ public sealed class ProcessTaskTracker : IDisposable
         _capacity?.DecrementGroups();
 
         var duration = stopped.OccurredAt - process.Group.StartedAt;
-        var result = _ruleEngine.Evaluate(process.Group.RootCandidate, duration, BuiltInDetectionRules.For(_detectionMode));
+        var result = _ruleEngine.Evaluate(process.Group.RootCandidate, duration, BuiltInDetectionRules.For(_detectionMode), null, _thresholdOverrides);
         process.Group.Task.SetTaskProbability(result.Score);
         process.Group.Task.Apply(TaskSignal.ProcessEnded, CompletionConfidence.ProcessEnded, stopped.OccurredAt);
         EnqueueTaskSave(process.Group.Task);

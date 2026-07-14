@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Security.Principal;
 using Microsoft.Windows.AppNotifications;
-using Microsoft.Windows.AppNotifications.Builder;
+using TaskNotify.Desktop.Notifications;
 using Forms = System.Windows.Forms;
 using TaskNotify.Core.Tasks;
 
@@ -62,12 +62,7 @@ public sealed class TrayIconService : IDisposable
         {
             try
             {
-                var notification = new AppNotificationBuilder()
-                    .AddArgument("action", "open")
-                    .AddArgument("taskId", notice.TaskId.ToString("D"))
-                    .AddText(title)
-                    .AddText(body)
-                    .BuildNotification();
+                var notification = NotificationBuilder.Build(notice);
                 AppNotificationManager.Default.Show(notification);
                 return;
             }

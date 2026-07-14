@@ -9,7 +9,9 @@
       "Bash(dotnet sln *)",
       "Bash(dotnet restore *)",
       "Bash(taskkill /PID 6388 /F)",
-      "Bash(powershell -Command \"Stop-Process -Name TaskNotify -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1\")"
+      "Bash(powershell -Command \"Stop-Process -Name TaskNotify -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1\")",
+      "Bash(git *)",
+      "Bash(dotnet publish *)"
     ]
   }
 }

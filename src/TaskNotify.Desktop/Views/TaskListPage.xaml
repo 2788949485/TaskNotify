@@ -16,6 +16,7 @@
 
         <ListBox Grid.Row="1"
                  ItemsSource="{Binding Tasks}"
+                 SelectedItem="{Binding SelectedTask, Mode=TwoWay}"
                  Background="Transparent"
                  BorderThickness="1"
                  BorderBrush="{DynamicResource {x:Static SystemColors.ControlLightBrushKey}}">
@@ -24,6 +25,23 @@
                     <Setter Property="Padding" Value="0" />
                     <Setter Property="Margin" Value="0,0,0,4" />
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="ContextMenu">
+                        <Setter.Value>
+                            <ContextMenu>
+                                <MenuItem Header="以后总是提醒此类任务"
+                                          Command="{Binding PlacementTarget.DataContext.AlwaysRemindCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="以后永不提醒此程序"
+                                          Command="{Binding PlacementTarget.DataContext.NeverRemindCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="标记为后台服务（不通知）"
+                                          Command="{Binding PlacementTarget.DataContext.MarkAsServiceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="标记为数据工具（不通知）"
+                                          Command="{Binding PlacementTarget.DataContext.MarkAsDataToolCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="通知阈值设为 60 秒"
+                                          Command="{Binding PlacementTarget.DataContext.BumpThresholdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                            </ContextMenu>
+                        </Setter.Value>
+                    </Setter>
                 </Style>
             </ListBox.ItemContainerStyle>
             <ListBox.ItemTemplate>

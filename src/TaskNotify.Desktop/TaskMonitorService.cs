@@ -24,6 +24,13 @@ public sealed class TaskMonitorService
     private Task? _snapshotTask;
     private CancellationTokenSource? _snapshotCancellation;
 
+    /// <summary>
+    /// When set, every produced notice is forwarded here instead of being shown
+    /// directly. The dispatcher applies merge + cooldown then routes to the tray.
+    /// When null (tests, or no dispatcher wired), falls back to direct <see cref="TrayIconService.Show"/>.
+    /// </summary>
+    public Action<TaskCompletionNotice>? NoticeDispatched { get; set; }
+
     public TaskMonitorService(
         TaskHistoryViewModel history,
         TrayIconService tray,
@@ -35,8 +42,9 @@ public sealed class TaskMonitorService
     {
         _history = history;
         _tray = tray;
-        var mode = settingsStore.Current.DetectionMode;
-        _tracker = new(taskRepository, eventRepository, capacityGuard, mode, residentDetector);
+        var current = settingsStore.Current;
+        var mode = current.DetectionMode;
+        _tracker = new(taskRepository, eventRepository, capacityGuard, mode, residentDetector, current.NotificationThresholdsSeconds);
         _snapshotMonitor = new(mode);
         _monitor = new(StartSnapshotFallback, StopSnapshotFallback);
         _integrationListener = new(_tracker);
@@ -70,7 +78,7 @@ public sealed class TaskMonitorService
         await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
         {
             _history.Add(notice);
-            _tray.Show(notice);
+            Dispatch(notice);
         }, System.Windows.Threading.DispatcherPriority.Normal, cancellationToken);
     }
 
@@ -79,8 +87,14 @@ public sealed class TaskMonitorService
         System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
             _history.Add(notice);
-            _tray.Show(notice);
+            Dispatch(notice);
         });
+    }
+
+    private void Dispatch(TaskCompletionNotice notice)
+    {
+        if (NoticeDispatched is { } sink) sink(notice);
+        else _tray.Show(notice);
     }
 
     private void StartSnapshotFallback(Exception _)

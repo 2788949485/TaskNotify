@@ -19,14 +19,11 @@ public partial class MainWindow : Window
     /// <summary>
     /// Selects the task matching <paramref name="taskId"/> in the task list, if
     /// the current page is one of the task-filter views. Used by toast-click
-    /// navigation. Implementation scans the store and nudges the navigation to
-    /// TaskCenter first so the user lands on a visible entry.
+    /// navigation. Hands off to <see cref="MainViewModel.SelectTaskInCenter"/>.
     /// </summary>
     public void SelectTaskById(Guid taskId)
     {
-        _store.FindById(taskId); // touch the store so it exists
-        // Phase 4: defer deep-link to the in-page ListBox; the task will be visible
-        // in TaskCenter. Phase 6's notification enhancement will add the precise scroll-to.
+        _viewModel.SelectTaskInCenter(taskId);
     }
 
     public bool AllowClose { get; set; }

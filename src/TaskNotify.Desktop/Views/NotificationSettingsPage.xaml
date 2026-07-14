@@ -106,6 +106,144 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+
+                <TextBlock Text="邮箱通知" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,8" />
+                <CheckBox Margin="0,4"
+                          Content="任务完成时同时发送邮件（与系统通知并行，使用独立的 email.json 配置）"
+                          IsChecked="{Binding EmailEnabled, Mode=TwoWay}" />
+
+                <Grid Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="80" />
+                        <ColumnDefinition Width="40" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="SMTP 服务器" />
+                    <TextBox Grid.Column="1"
+                             Margin="0,0,8,0"
+                             Padding="6,4"
+                             VerticalContentAlignment="Center"
+                             ToolTip="例如 smtp.gmail.com"
+                             Text="{Binding SmtpHost, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Column="2"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"
+                               Text="端口" />
+                    <TextBox Grid.Column="3"
+                             Padding="6,4"
+                             VerticalContentAlignment="Center"
+                             Text="{Binding SmtpPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <CheckBox Grid.Column="4"
+                              VerticalAlignment="Center"
+                              Margin="8,0,0,0"
+                              Content="SSL/TLS"
+                              IsChecked="{Binding UseSsl, Mode=TwoWay}" />
+                </Grid>
+
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="用户名" />
+                    <TextBox Grid.Column="1"
+                             Padding="6,4"
+                             VerticalContentAlignment="Center"
+                             ToolTip="通常就是邮箱地址本身"
+                             Text="{Binding SmtpUserName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="密码" />
+                    <PasswordBox Grid.Column="1"
+                                 x:Name="EmailPasswordBox"
+                                 Padding="6,4"
+                                 VerticalContentAlignment="Center"
+                                 ToolTip="用 DPAPI 加密存储到 email.json，仅当前 Windows 用户可解密；留空表示沿用已保存的密码"
+                                 PasswordChanged="EmailPasswordBox_PasswordChanged" />
+                </Grid>
+
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="160" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="发件人" />
+                    <TextBox Grid.Column="1"
+                             Margin="0,0,8,0"
+                             Padding="6,4"
+                             VerticalContentAlignment="Center"
+                             ToolTip="发件邮箱地址"
+                             Text="{Binding FromAddress, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBox Grid.Column="2"
+                             Padding="6,4"
+                             VerticalContentAlignment="Center"
+                             ToolTip="发件人显示名（可空）"
+                             Text="{Binding FromDisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="收件人" />
+                    <TextBox Grid.Column="1"
+                             Padding="6,4"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             MinLines="2"
+                             MaxLines="4"
+                             VerticalScrollBarVisibility="Auto"
+                             ToolTip="多个地址用逗号、分号或换行分隔"
+                             Text="{Binding ToAddresses, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="标题前缀" />
+                    <TextBox Grid.Column="1"
+                             Padding="6,4"
+                             VerticalContentAlignment="Center"
+                             Text="{Binding SubjectPrefix, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                    <Button Padding="14,4"
+                            Content="保存"
+                            Command="{Binding SaveEmailCommand}" />
+                    <Button Padding="14,4"
+                            Margin="8,0,0,0"
+                            Content="测试发送"
+                            Command="{Binding TestSendEmailCommand}" />
+                    <TextBlock VerticalAlignment="Center"
+                               Margin="12,0,0,0"
+                               FontSize="12"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="{Binding TestSendStatus}" />
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
     </Border>
