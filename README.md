@@ -1,182 +1,172 @@
 # TaskNotify
 
-> **A lightweight Windows desktop app for automatic detection of long-running development tasks with Windows notifications.**
+> **A lightweight Windows desktop app that automatically detects long-running development tasks and notifies you via Windows toast and (optionally) email when they finish, fail, or need your attention.**
 >
-> 一个轻量级 Windows 桌面应用，用于自动检测长时间运行的开发任务并发送 Windows 通知。
+> 轻量级 Windows 桌面应用:自动检测长时间运行的开发任务,在完成、失败、超时或需要确认时通过 Windows 通知(可选邮件)提醒你。
 
 ---
 
-## Table of Contents / 目录
+## 目录 / Table of Contents
 
-- [Features](#features) / [功能特性](#功能特性)
-- [Architecture](#architecture) / [架构](#架构)
-- [Quick Start](#quick-start) / [快速开始](#快速-start)
-- [Installation & Setup](#installation--setup) / [安装与配置](#安装与配置)
-- [Integrations](#integrations) / [集成](#集成)
-  - [Claude Code](#claude-code)
-  - [OpenAI Codex](#openai-codex)
-  - [PowerShell](#powershell)
-  - [VS Code](#vs-code)
-  - [Hermes Agent](#hermes-agent)
-- [Configuration](#configuration) / [配置](#配置)
-- [Privacy](#privacy) / [隐私](#隐私)
-- [Development](#development) / [开发](#开发)
+- [功能特性](#功能特性)
+- [架构总览](#架构总览)
+- [快速开始](#快速开始)
+- [集成接入](#集成接入)
+- [通知系统](#通知系统)
+- [邮件通知](#邮件通知)
+- [检测规则与配置](#检测规则与配置)
+- [隐私](#隐私)
+- [开发指南](#开发指南)
+- [常见问题](#常见问题)
 
 ---
 
-## Features / 功能特性
+## 功能特性
 
-### Detection / 检测
-- **WMI Process Monitoring** — Monitors process start/exit via Windows WMI
-- **Snapshot Compensation** — 15-second polling backup when WMI events are lost
-- **Parent-Child Aggregation** — Groups related processes (e.g., `python.exe` → `ffmpeg.exe`) into a single task
-- **PID Reuse Protection** — Prevents merging different tasks with recycled PIDs
-- **Detection Rules** — Data-driven scoring system with built-in and user-defined rules
+### 检测 / Detection
+- **WMI 进程监控** — 通过 Windows WMI 实时捕获进程启动/退出
+- **快照补偿** — 15 秒轮询兜底,防止 WMI 事件丢失
+- **父子进程聚合** — 把相关进程(如 `python.exe` → `ffmpeg.exe`)归并为单个任务
+- **PID 复用保护** — 通过 `ProcessIdentity` 防止复用 PID 导致的任务串扰
+- **三种检测模式** — `Precise` / `Balanced` / `Broad`,扫描范围逐级放宽
+- **WezTerm / Alacritty 支持** — 终端父进程正则覆盖现代终端
 
-### Integrations / 集成
-- **Claude Code** — Official hook integration for task lifecycle events
-- **OpenAI Codex** — Hook-based task event forwarding
-- **PowerShell** — Profile module for command lifecycle tracking
-- **VS Code** — Extension for task and terminal event forwarding
-- **Hermes Agent** — Direct IPC integration for AI agent tasks
+### 集成 / Integrations
+- **Claude Code** — 官方 Hook 集成,接收 SessionStart / Stop / StopFailure / PermissionRequest / Notification 事件
+- **OpenAI Codex** — Hook 转发每轮完成与权限请求
+- **PowerShell** — Profile 模块追踪命令生命周期
+- **VS Code** — 扩展转发 Task 与终端事件(默认关闭)
+- **Hermes Agent** — 直接 IPC 集成 AI Agent 任务
 
-### Notifications / 通知
-- **Windows App Notifications** — Native desktop notifications with balloon tips
-- **Dynamic Status** — Shows success/failure/pending based on evidence confidence
-- **Notification Click** — Double-click to open main window and locate the task
-- **Deduplication** — Same logical task from multiple sources produces one notification
+### 通知 / Notifications
+- **Windows 原生 Toast** — 使用 `Microsoft.WindowsAppSDK` 的 AppNotification API
+- **事件合并** — 同一任务在合并窗口(默认 5 秒)内的多个事件合并成一条通知,只保留最高优先级
+- **冷却抑制** — 同一任务冷却期内(默认 10 秒)不重复打扰;`WaitingForPermission` 永远绕过冷却
+- **状态化按钮** — 通知携带上下文按钮(打开项目 / 查看日志 / 复制错误 / 忽略此程序 / 以后总是提醒 …),按任务状态智能挑选
+- **一键学习** — 按钮直接落库为用户规则,下次同类型任务自动按你的偏好处理
+- **邮件并行** — 可选启用 SMTP,完成事件同时发送 HTML 邮件
 
-### Privacy / 隐私
-- **Local Only** — No cloud sync, no telemetry, no remote logging
-- **Command Sanitization** — Automatically masks passwords, tokens, API keys before storage
-- **No Screen Reading** — Does not capture screenshots, clipboard, or keystrokes
-- **Default Deny** — Ignores system processes, IDE language servers, electron renderers by default
+### 隐私 / Privacy
+- **纯本地** — 无云端同步、无遥测、无远程上报
+- **命令脱敏** — 自动遮蔽密码、Token、API Key 等敏感串后才落库
+- **SMTP 密码加密** — 邮箱密码使用 DPAPI(`CurrentUser` 范围)加密,仅当前 Windows 账户可解密
+- **不读取屏幕** — 不截图、不读剪贴板、不录键盘
+- **默认拒绝** — 默认忽略系统进程、IDE 语言服务器、Electron 渲染器
 
 ---
 
-## Architecture / 架构
+## 架构总览
 
 ```
-TaskNotify.Desktop (WPF / System Tray / Notifications)
+TaskNotify.Desktop (WPF / 托盘 / 通知 / 邮件)
     │
     ├── TaskMonitorService
-    │   ├── WmiProcessMonitor     (WMI start/stop traces)
-    │   ├── SnapshotProcessMonitor (15s polling backup)
-    │   └── IntegrationEventListener (Named Pipe server)
+    │   ├── WmiProcessMonitor        (WMI 启停追踪)
+    │   ├── SnapshotProcessMonitor   (15s 轮询兜底)
+    │   └── IntegrationEventListener (Named Pipe 服务端)
     │
-    ├── ProcessTaskTracker        (Core: state machine, scoring)
-    ├── TaskHistoryViewModel      (UI data binding)
-    └── TrayIconService           (Balloon tips, click handling)
-
-TaskNotify.Integrations
-    ├── Claude/ClaudeTaskNotifyClient      (SDK for Claude Code hooks)
-    ├── Claude/ClaudeSettingsManager       (settings.json config)
-    ├── Codex/CodexTaskNotifyClient        (SDK for Codex hooks)
-    ├── Hermes/HermesTaskNotifyClient      (SDK for Hermes Agent)
-    ├── PowerShell/TaskNotify.psm1         (PowerShell module)
-    └── PowerShell/PowerShellProfileInstaller (Profile management)
-
-TaskNotify.Ipc
-    ├── IntegrationPipeServer              (Named Pipe listener)
-    ├── IntegrationPipeClient              (Named Pipe sender)
-    └── IntegrationPipeMessage             (Protocol definition)
+    ├── ProcessTaskTracker           (核心:状态机 + 评分)
+    ├── NotificationDispatcher       (合并 → 冷却 → 分发)
+    │   ├── NotificationMerger       (同任务事件合并)
+    │   ├── NotificationCooldown     (冷却抑制)
+    │   ├── NotificationBuilder      (Toast 内容 + 按钮)
+    │   ├── NotificationActionHandlers (按钮动作派发)
+    │   └── EmailNotifier            (可选 SMTP 后台通道)
+    ├── LearningActions              (用户规则持久化)
+    └── TrayIconService              (托盘图标 + 点击)
 
 TaskNotify.Core
-    ├── ProcessTaskTracker                 (Event handling, state machine)
-    ├── DetectedTask                       (Task model)
-    ├── DetectionRuleEngine                (Scoring rules)
-    ├── TaskStateMachine                   (State transitions)
-    ├── CompletionConfidence               (Evidence reliability levels)
-    └── CommandSanitizer                   (Sensitive data masking)
+    ├── Tasks/                       (DetectedTask、状态机、TaskCompletionNotice)
+    ├── Detection/                   (规则引擎、命令脱敏、检测模式)
+    ├── Notifications/               (NotificationMerger / Cooldown / Priority — 纯逻辑)
+    ├── Learning/                    (LearningActions)
+    ├── Events/                      (进程事件 / 集成事件)
+    ├── Performance/、Recovery/      (容量保护 / 任务恢复)
+
+TaskNotify.Infrastructure
+    ├── Settings/                    (AppSettings + JsonSettingsStore)
+    ├── Email/                       (EmailSettings + EmailPasswordProtector + EmailSettingsStore)
+    ├── Repositories/                (SQLite 仓储实现)
+    ├── Database/                    (Schema 迁移 + 嵌入式 SQL)
+    ├── Logging/                     (文件日志)
+    └── SystemInfo/                  (系统启动时间提供者)
+
+TaskNotify.ProcessMonitor           (WMI + 快照,平台相关)
+TaskNotify.Ipc                      (Named Pipe 协议:消息、客户端、服务端)
+TaskNotify.Integrations
+    ├── Claude/                     (Client + SettingsManager + hook-receiver.js)
+    ├── Codex/                      (Client + SettingsManager + hook-receiver.js)
+    ├── Hermes/                     (Client + SettingsManager + hook-receiver.js)
+    └── PowerShell/                 (TaskNotify.psm1 + ProfileInstaller)
 ```
+
+**架构边界**
+- `Core` 不依赖 WPF / Windows SDK / WMI / 外部 API
+- `ProcessMonitor` 不含 UI 与通知逻辑
+- `Ipc` 纯协议定义,平台无关
+- `Infrastructure` 仅依赖 `Core`(SQLite / JSON / 邮件)
+- `Integrations` 仅依赖 `Core` + `Ipc`
+- `Desktop` 是表现层,依赖所有下层
 
 ---
 
-## Quick Start / 快速开始
+## 快速开始
 
-### Prerequisites / 前置要求
-- Windows 10 or Windows 11
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (or Runtime for pre-built binaries)
-- [Node.js](https://nodejs.org/) (for Claude Code hook receiver)
+### 前置要求
+- Windows 10 / 11
+- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- (可选) [Node.js](https://nodejs.org/) — 用于 Claude / Codex / Hermes 的 Hook 接收器
 
-### Build & Run / 构建与运行
+### 构建运行
 
 ```powershell
-# Clone and build
 git clone <repository-url>
 cd TaskNotify
 dotnet build
-
-# Run the desktop app
 dotnet run --project src/TaskNotify.Desktop
 ```
 
-The app will appear in your system tray. It starts monitoring immediately.
+应用启动后会驻留在系统托盘,立即开始监控。
 
----
+### 基本用法
 
-## Installation & Setup / 安装与配置
-
-### Basic Usage / 基本用法
-
-After starting TaskNotify Desktop, no additional configuration is needed for basic process monitoring:
+直接运行你的命令即可,无需任何包装:
 
 ```powershell
-# Just run your command normally — TaskNotify detects it automatically
-python process.py
+python train_model.py
 npm run build
 ffmpeg -i input.mp4 output.avi
 ```
 
-No wrapper commands needed. No manual reporting.
-
-### Enable Claude Code Integration / 启用 Claude Code 集成
-
-#### Step 1: Start TaskNotify Desktop / 启动桌面程序
-
-```powershell
-& "D:\zhuomian\TaskNotify\src\TaskNotify.Desktop\bin\Debug\net8.0-windows\TaskNotify.Desktop.exe"
-```
-
-Or build and run:
-```powershell
-dotnet run --project src/TaskNotify.Desktop
-```
-
-#### Step 2: Install Claude Code Hook / 安装 Claude Code 挂钩
-
-Right-click the TaskNotify tray icon and select **安装 Claude Code 集成**. TaskNotify copies
-the receiver to the current user's local application data directory, backs up
-`~/.claude/settings.json`, and merges official `SessionStart`, `Stop`, `StopFailure`,
-`PermissionRequest`, and `Notification` hooks without replacing existing hooks.
-
-#### Step 3: Restart Claude Code / 重启 Claude Code
-
-Start a new Claude Code session, then use `/hooks` to verify the installed user hooks.
-
-Now when you run Claude Code tasks, you'll receive TaskNotify desktop notifications.
+任务结束(并满足最短通知时长)后,Windows 通知会自动弹出。
 
 ---
 
-## Integrations / 集成
+## 集成接入
 
 ### Claude Code
 
-**What it does / 作用:**
-When Claude Code starts a task, finishes, needs user input, or encounters an error, it sends a standardized event to TaskNotify via Named Pipe.
+右键托盘图标 → **安装 Claude Code 集成**。TaskNotify 会:
+1. 备份现有 `~/.claude/settings.json`
+2. 合并官方事件 Hook(`SessionStart` / `Stop` / `StopFailure` / `PermissionRequest` / `Notification`),不替换你已有的 Hook
+3. 把 Node.js 接收器复制到 `%LOCALAPPDATA%\TaskNotify\`
 
-**Events / 事件:**
-| Event | Description | Notification |
+在 Claude Code 中执行 `/hooks` 验证安装。完成后每次会话事件都会触发 TaskNotify 通知。
+
+**事件 → 通知映射**
+
+| 事件 | 触发通知 | 通知文案示例 |
 |---|---|---|
-| `TaskStarted` | Claude begins a new task | None (task running) |
-| `TaskSucceeded` | Task completed successfully | ✅ "Claude: Build — Success · 00:45" |
-| `TaskFailed` | Task failed with error | ✅ "Claude: Tests — Failed · 30s" |
-| `TaskWaitingForPermission` | Needs user approval | ✅ "Claude: Deploy — Waiting for permission" |
-| `TaskWaitingForInput` | Needs user response | ✅ "Claude: Question — Waiting for input" |
-| `TaskCancelled` | Task was cancelled | ✅ "Claude: Build — Cancelled" |
-| `TaskTimedOut` | Task exceeded time limit | ✅ "Claude: Process — Timed out" |
+| `TaskStarted` | 否(任务进行中) | — |
+| `TaskSucceeded` | 是 | ✅ "Refactor auth 已结束 · 用时 02:14 · 执行成功" |
+| `TaskFailed` | 是 | ❌ "Tests 已结束 · 用时 00:30 · 执行失败" |
+| `TaskWaitingForPermission` | 是(绕过冷却) | 🔐 "Deploy 需要你处理 · 用时 00:05 · 需要用户确认" |
+| `TaskWaitingForInput` | 是 | ⌨️ "Question 需要你处理 · 等待用户输入" |
+| `TaskCancelled` | 是 | ⏹️ "Build 已结束 · 已取消" |
+| `TaskTimedOut` | 是 | ⏱️ "Process 已结束 · 已超时" |
 
-**SDK Usage (for hook developers) / SDK 用法:**
+**SDK 用法(自定义 Hook 开发)**
+
 ```csharp
 using TaskNotify.Integrations.Claude;
 
@@ -189,23 +179,15 @@ await client.NotifyFailedAsync("session-123", "Type error in UserService");
 
 ### OpenAI Codex
 
-Codex CLI can forward task events to TaskNotify via a hook receiver.
+右键托盘图标 → **安装 Codex 集成**。TaskNotify 会备份并合并 `~/.codex/hooks.json`。在 Codex 中执行 `/hooks` 信任 TaskNotify 命令 Hook。
 
-**Setup / 设置:**
+| 事件 | 通知 |
+|---|---|
+| `UserPromptSubmit` | 否(进行中) |
+| `PermissionRequest` | ✅ 等待权限确认 |
+| `Stop` | ✅ 本轮完成 |
+| 进程退出但无 `Stop` | ✅ 结果未知 |
 
-Right-click the TaskNotify tray icon and select **安装 Codex 集成**. TaskNotify backs up
-and merges its handlers into `~/.codex/hooks.json`. In Codex, run `/hooks` once to
-review and trust the TaskNotify command hooks, as required by Codex's hook security model.
-
-**Events / 事件:**
-| Event | Description | Notification |
-|---|---|---|
-| `UserPromptSubmit` | Codex begins a turn | None (task running) |
-| `PermissionRequest` | Codex needs user approval | ✅ Waiting for permission |
-| `Stop` | Codex finishes a turn | ✅ Turn completed |
-| Process exit without `Stop` | Codex ended without a confirmed result | ✅ Result unknown |
-
-**SDK Usage / SDK 用法:**
 ```csharp
 using TaskNotify.Integrations.Codex;
 
@@ -217,241 +199,232 @@ await client.NotifyFailedAsync("task-123", "Build failed");
 
 ### PowerShell
 
-Installs a PowerShell module into your profile that forwards command events.
-
-**Install / 安装:**
-```powershell
-# Add to your PowerShell profile (preserves existing content)
-# See PowerShellProfileInstaller.Install() for programmatic use
-```
-
-**Uninstall / 卸载:**
-```powershell
-# Removes only the TaskNotify block, preserves everything else
-# See PowerShellProfileInstaller.Uninstall() for programmatic use
-```
+通过 `PowerShellProfileInstaller` 把 `TaskNotify.psm1` 注入 PowerShell Profile,自动追踪每条命令的生命周期。卸载时只移除 TaskNotify 块,保留其他配置。
 
 ### VS Code
 
-Extension that forwards VS Code Task lifecycle events to TaskNotify.
+扩展转发 VS Code Task 与终端事件。默认在 `EnabledSources` 中关闭,需手动启用。
 
 ### Hermes Agent
 
-Direct IPC integration for AI agent tasks. Use `HermesTaskNotifyClient` to send events.
+通过 `HermesTaskNotifyClient` 直接发送事件,适合自研 Agent 接入。
 
 ---
 
-## Configuration / 配置
+## 通知系统
 
-### Detection Rules / 检测规则
+通知不是"事件一到就弹"。所有 `TaskCompletionNotice` 都会经过 `NotificationDispatcher` 调度,避免噪声。
 
-Built-in rules define default detection behavior. User rules override built-in rules.
+### 合并窗口(Merge Burst)
 
-**Built-in Balanced Mode / 内置平衡模式:**
-- Python, Node, npm, ffmpeg: score +30
-- Terminal parent process: score +20
-- IDE parent process: score +15
-- Task keywords (build/test/train/process): score +20
-- Running >30s: score +15
+同一任务在窗口(默认 **5 秒**)内的多个事件合并成一条通知,只保留优先级最高的那个。
 
-**Notification Thresholds / 通知阈值:**
-| Process | Minimum Duration |
+**优先级表**
+
+| 状态 | 优先级 |
 |---|---|
-| ffmpeg.exe | 10 seconds |
-| python.exe, node.exe, npm.exe | 20 seconds |
-| Others | 60 seconds |
+| `Failed` | 100 |
+| `WaitingForPermission` | 90 |
+| `WaitingForInput` | 80 |
+| `Succeeded` | 70 |
+| `Cancelled` / `TimedOut` | 60 |
+| `EndedUnknown` | 50 |
+| `PossiblyCompleted` | 40 |
 
-### User Rules / 用户规则
+例如:任务先 `PossiblyCompleted` 后 `Failed`,窗口内只弹出 `Failed` 通知。
 
-Users can customize detection via the settings UI:
-- "Always notify for this task type"
-- "Never notify for this executable"
-- "Mark as long-running service"
-- "Mark as data processing program"
-- "Change minimum notification duration"
+### 冷却(Cooldown)
 
----
+同一任务在冷却期(默认 **10 秒**)内的后续通知被抑制。例外:`WaitingForPermission` 永远绕过冷却(必须让用户操作)。
 
-## Privacy / 隐私
+### 通知按钮
 
-### What is collected / 采集内容
-- Process name, executable path, command line (sanitized)
-- Parent process name
-- Task duration
-- Event type and timestamp
-- Short summary (user-provided by integrations)
+每条通知根据 `TaskState` 智能挑选按钮子集:
 
-### What is NOT collected / 不采集内容
-- ❌ Source code
-- ❌ Data file contents
-- ❌ Full terminal output
-- ❌ Complete command history
-- ❌ Claude prompts or full responses
-- ❌ Browser content
-- ❌ Screenshots
-- ❌ Clipboard content
-- ❌ Keyboard input
-- ❌ Passwords, API keys, tokens (automatically masked)
+| 状态 | 按钮 |
+|---|---|
+| `Failed` | 打开项目 / 查看日志 / 复制错误 / 以后总是提醒 / 忽略此程序 / 稀后 |
+| `Succeeded` | 打开项目 / 打开输出目录 / 查看日志 / 忽略此程序 / 稀后 |
+| `WaitingForPermission` / `WaitingForInput` | 打开项目 / 稀后 |
+| `PossiblyCompleted` | 打开项目 / 打开输出目录 / 稀后 |
+| 其他 | 打开项目 / 稀后 |
 
-### Storage / 存储
-- All data stored locally in SQLite
-- Task history retention: 90 days (configurable)
-- Log retention: 14 days (configurable)
-- No cloud sync, no telemetry, no remote logging
+点击按钮触发 `LearningActions` 把偏好落库为用户规则,下次同类型任务自动按你的选择处理。
 
 ---
 
-## Development / 开发
+## 邮件通知
 
-### Project Structure / 项目结构
+完成事件除系统通知外,可并行发送 HTML 邮件。在设置页 **通知设置 → 邮箱通知** 中配置。
+
+### 字段
+
+| 字段 | 说明 |
+|---|---|
+| SMTP 服务器 | 如 `smtp.gmail.com` |
+| 端口 | 默认 `587`(SMTP submission + STARTTLS) |
+| SSL/TLS | 默认开启 |
+| 用户名 | 通常就是邮箱地址 |
+| 密码 | 用 DPAPI 加密存储到 `email.json`,仅当前 Windows 用户可解密 |
+| 发件人 / 显示名 | 显示名默认 `TaskNotify` |
+| 收件人 | 多地址用逗号、分号或换行分隔 |
+| 标题前缀 | 默认 `[TaskNotify]` |
+
+### 行为细节
+
+- **独立配置文件** — SMTP 凭证存储在 `%LOCALAPPDATA%\TaskNotify\email.json`,与通用 `settings.json` 隔离
+- **后台通道** — `EmailNotifier` 用 `Channel<TaskCompletionNotice>` 异步排队,绝不阻塞 Toast 通道
+- **重试** — 单次发送失败后等 5 秒重试一次,超时 30 秒
+- **队列上限** — 64 条,溢出丢弃(避免离线后堆积)
+- **测试发送** — 设置页"测试发送"按钮同步返回结果,用于验证 SMTP 配置
+- **诊断日志** — 失败时写入 `%LOCALAPPDATA%\TaskNotify\email.log`
+- **禁用兜底** — `Enabled = false` 时直接跳过,不触网
+
+---
+
+## 检测规则与配置
+
+### 检测模式
+
+| 模式 | 说明 |
+|---|---|
+| `Precise` | 不依赖 WMI 推断,只接收集成 Hook 事件 |
+| `Balanced`(默认) | Python / Node / ffmpeg + 终端/IDE 父进程 + 任务关键词 + 30 秒阈值 |
+| `Broad` | Balanced + Java / .NET / 原生构建(cl、cargo、cmake…) |
+
+### 内置评分(Balanced 模式)
+
+- Python / Node / npm / ffmpeg:基础分 +30
+- 终端父进程(WindowsTerminal / wezterm-gui / alacritty / powershell / pwsh / cmd / Gateway):+20
+- IDE 父进程(Code / devenv / pycharm64 / idea64):+15
+- 任务关键词(build / test / train / process):+20
+- 运行超过 30 秒:+15
+
+### 通知阈值(最短时长)
+
+| 进程 | 默认最短时长 |
+|---|---|
+| `ffmpeg.exe` | 10 秒 |
+| `python.exe` / `node.exe` / `npm.exe` | 20 秒 |
+| 其他 | 60 秒 |
+
+在设置页可按进程名覆盖阈值。
+
+### `AppSettings` 字段一览
+
+存储在 `%LOCALAPPDATA%\TaskNotify\settings.json`:
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `DetectionMode` | `Balanced` | 检测模式 |
+| `EnabledSources` | wmi/claude/codex/hermes/powershell = true,vscode = false | 各集成开关 |
+| `NotificationThresholdsSeconds` | `{}` | 进程级最短时长覆盖 |
+| `NotificationCooldownSeconds` | `10` | 同任务冷却 |
+| `MergeBurstSeconds` | `5` | 同任务合并窗口 |
+| `NotifyOnWaitingForPermission` | `true` | 等待权限时是否通知(绕过冷却) |
+| `NotifyOnPossiblyCompleted` | `false` | 推测完成时是否通知(可能嘈杂) |
+| `Privacy.ExtraSensitivePatterns` | `[]` | 额外的脱敏正则 |
+| `Privacy.ClearHistoryOnExit` | `false` | 退出时清空历史 |
+| `Privacy.DisableHistory` | `false` | 完全不落库 |
+| `Performance.MaxTrackedProcesses` | `0`(用默认) | 最大并发跟踪数 |
+| `Performance.MaxConcurrentTaskGroups` | `0` | 最大任务组数 |
+| `Performance.HistoryRetentionDays` | `0`(默认 90) | 历史保留天数 |
+
+---
+
+## 隐私
+
+### 采集内容
+- 进程名、可执行路径、命令行(脱敏后)
+- 父进程名
+- 任务时长
+- 事件类型与时间戳
+- 集成提供的简短摘要
+
+### 不采集内容
+- ❌ 源代码 / 数据文件内容
+- ❌ 完整终端输出 / 命令历史
+- ❌ Claude 提示词与完整响应
+- ❌ 浏览器内容 / 截图 / 剪贴板 / 键盘输入
+- ❌ 密码、API Key、Token(自动遮蔽)
+
+### 存储位置
+
+| 路径 | 内容 |
+|---|---|
+| `%LOCALAPPDATA%\TaskNotify\settings.json` | 通用偏好 |
+| `%LOCALAPPDATA%\TaskNotify\email.json` | SMTP 配置(密码经 DPAPI 加密) |
+| `%LOCALAPPDATA%\TaskNotify\tasknotify.db` | SQLite 任务历史 |
+| `%LOCALAPPDATA%\TaskNotify\logs\` | 应用日志(默认保留 14 天) |
+| `%LOCALAPPDATA%\TaskNotify\email.log` | 邮件失败诊断日志 |
+
+历史默认保留 90 天,日志 14 天,均可配置。无云端同步、无遥测。
+
+---
+
+## 开发指南
+
+### 构建
+
+```powershell
+dotnet build                                     # 构建整个解决方案
+dotnet build src/TaskNotify.Core                # 构建单个项目
+dotnet test tests/TaskNotify.Core.Tests          # 运行单元测试
+dotnet publish src/TaskNotify.Desktop -c Release -o ./publish  # 发布
+```
+
+### 项目结构
 
 ```
 TaskNotify/
 ├── src/
-│   ├── TaskNotify.Core/           # Domain models, state machine, rules
-│   ├── TaskNotify.ProcessMonitor/ # WMI + Snapshot process monitoring
-│   ├── TaskNotify.Ipc/            # Named Pipe protocol (framing, messages)
-│   ├── TaskNotify.Integrations/   # Claude, Codex, Hermes, PowerShell, VS Code
-│   └── TaskNotify.Desktop/        # WPF UI, system tray, notifications
+│   ├── TaskNotify.Core/              # 领域模型、状态机、规则、通知调度纯逻辑
+│   ├── TaskNotify.ProcessMonitor/    # WMI + 快照进程监控
+│   ├── TaskNotify.Ipc/               # Named Pipe 协议
+│   ├── TaskNotify.Infrastructure/    # SQLite / JSON 设置 / 邮件 / 日志
+│   ├── TaskNotify.Integrations/      # Claude / Codex / Hermes / PowerShell / VS Code
+│   └── TaskNotify.Desktop/           # WPF UI + 托盘 + 通知 + 邮件
 ├── tests/
-│   └── TaskNotify.Core.Tests/     # Unit tests
-├── .gitignore
+│   └── TaskNotify.Core.Tests/        # 单元测试与集成测试
+├── TaskNotify.sln
 └── README.md
 ```
 
-### Architecture Boundaries / 架构边界
+### 添加新集成
 
-```
-TaskNotify.Core        — NO dependencies on WPF, Windows SDK, WMI, external APIs
-TaskNotify.ProcessMonitor — NO direct UI or notification logic
-TaskNotify.Ipc          — Pure protocol, platform-agnostic message definitions
-TaskNotify.Integrations — Depends on Core + Ipc only
-TaskNotify.Desktop      — WPF presentation layer, depends on all layers
-```
-
-### Building / 构建
-
-```powershell
-# Build entire solution
-dotnet build
-
-# Build individual project
-dotnet build src/TaskNotify.Core
-
-# Run tests
-dotnet test tests/TaskNotify.Core.Tests
-
-# Publish for distribution
-dotnet publish src/TaskNotify.Desktop -c Release -o ./publish
-```
-
-### Adding a New Integration / 添加新集成
-
-1. Create event handler in `TaskNotify.Integrations/<NewIntegration>/`
-2. Use `IntegrationPipeClient` to send `IntegrationPipeMessage`
-3. Map external event types to `IntegrationTaskAction`
-4. Document in README.md
+1. 在 `TaskNotify.Integrations/<NewIntegration>/` 下创建 Client 与 SettingsManager
+2. 用 `IntegrationPipeClient` 发送 `IntegrationPipeMessage`
+3. 把外部事件映射到 `IntegrationTaskAction`
+4. 在 `AppSettings.EnabledSources` 注册开关
+5. 补充 README 与 hook-receiver 脚本
 
 ---
 
-## License / 许可证
+## 常见问题
 
-MIT License
+**Q: 任务结束没收到通知?**
+A: 检查:
+1. 托盘图标是否在运行
+2. 任务是否达到最短时长(python/node/npm 默认 20 秒,其他 60 秒)
+3. 进程是否被内置 `Ignore` 规则命中(语言服务器、调试器、`watch` / `dev-server`)
+4. 同任务是否在冷却期内
+5. 查看 `%LOCALAPPDATA%\TaskNotify\logs\` 确认事件是否被捕获
 
----
+**Q: 通知太频繁?**
+A: 调整 `NotificationCooldownSeconds`(加大冷却)、`MergeBurstSeconds`(加大合并窗口),或在设置中切换到 `Precise` 模式只接收集成事件。
 
-## Contributing / 贡献
+**Q: 邮件发不出去?**
+A:
+1. 设置页点击"测试发送",查看返回结果
+2. 检查 `%LOCALAPPDATA%\TaskNotify\email.log` 中的失败原因
+3. 确认 `Enabled` 已勾选,SMTP 主机/发件人/收件人三项非空
+4. 部分邮箱(如 Gmail)需使用应用专用密码,而非账户登录密码
 
-Pull requests welcome. Please ensure:
-1. All builds pass (`dotnet build`)
-2. Architecture boundaries are respected
-3. No sensitive data is logged or committed
-4. User configurations are preserved on upgrade
+**Q: SMTP 密码安全吗?**
+A: 使用 Windows DPAPI `CurrentUser` 范围加密,密文存储在 `email.json`。仅同一 Windows 账户在本机可解密;换用户、换机器、复制文件均无法还原。
 
----
+**Q: 如何卸载集成?**
+A: 各集成都有独立卸载入口,保留你原有的配置不丢失。Claude/Codex/Hermes 通过托盘菜单卸载,PowerShell 通过 `PowerShellProfileInstaller.Uninstall()`。
 
-# TaskNotify (中文版)
-
-> **轻量级 Windows 桌面应用，自动检测长时间运行的开发任务并在完成/失败/超时时发送 Windows 通知。**
-
-## 核心设计原则 / Core Principles
-
-1. **零配置启动** — 启动后自动监控，无需包装命令
-2. **证据驱动** — 通知文案严格基于检测证据的可信度
-3. **误报优先降低** — 平衡模式下默认忽略系统进程、IDE 语言服务器等
-4. **本地优先** — 所有数据存储在本地，无云端同步
-5. **隐私保护** — 自动脱敏密码、Token、API Key
-
-## 快速开始 / Quick Start
-
-### 安装依赖 / Install Dependencies
-
-```powershell
-# .NET 8.0 SDK
-dotnet --version
-
-# Node.js (for Claude Code hook)
-node --version
-```
-
-### 构建运行 / Build & Run
-
-```powershell
-dotnet build
-dotnet run --project src/TaskNotify.Desktop
-```
-
-### 基本使用 / Basic Usage
-
-```powershell
-# 直接运行你的命令即可，无需任何包装
-python process.py
-npm run build
-```
-
-## Claude Code 集成详细步骤 / Claude Code Integration Steps
-
-### 前提条件 / Prerequisites
-
-1. TaskNotify Desktop 正在运行
-2. Claude Code 已安装 (`npm install -g @anthropic-ai/claude-code`)
-3. Node.js 可用
-
-### 一键安装 / One-Step Install
-
-右键单击 TaskNotify 托盘图标，选择 **安装 Claude Code 集成**。安装器只合并
-TaskNotify 自己的官方事件 Hook，并在修改前备份现有 `settings.json`。
-
-### 验证安装 / Verify
-
-在 Claude Code 中执行 `/hooks`，确认 `SessionStart`、`Stop`、`StopFailure`、
-`PermissionRequest` 和 `Notification` 下显示来自 `User` 的 TaskNotify 命令 Hook。
-
-### 测试 / Test
-
-```powershell
-# 启动 Claude Code 并提问，完成后应收到通知
-claude "Write a hello world script in Python"
-# → 收到 Windows 通知: "Claude Code session ended · Success · 00:XX"
-```
-
-## 常见问题 / FAQ
-
-**Q: 为什么我的任务没有通知？**
-A: 检查以下几点：
-1. TaskNotify Desktop 是否在运行（右下角托盘图标）
-2. 任务是否超过最短通知时长（python.exe 为 20 秒）
-3. 进程是否被内置排除规则忽略（如语言服务器、调试器）
-4. 查看日志确认事件是否被捕获
-
-**Q: 通知太多怎么办？**
-A: 可以在设置中将检测模式改为"严格模式"，或添加用户规则忽略特定进程。
-
-**Q: 如何卸载集成？**
-A: 各集成均有独立的卸载方法，保留用户原有配置不变。
-
-**Q: Codex 会有通知吗？**
-A: 会。安装并在 `/hooks` 中信任 TaskNotify Hook 后，每轮完成和权限请求都会通知；若进程异常退出但没有官方 `Stop` 事件，只显示结果未知。
-
-**Q: 支持 macOS/Linux 吗？**
-A: 当前仅支持 Windows（使用 WMI 和 Windows 通知 API）。Linux/macOS 版本需要替换监控后端。
+**Q: 支持 macOS / Linux 吗?**
+A: 不支持。当前依赖 WMI、Windows AppNotification、DPAPI。移植需要替换进程监控后端、通知 API 与密钥保护方案。
