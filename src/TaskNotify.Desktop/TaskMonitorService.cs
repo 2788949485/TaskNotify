@@ -1,5 +1,6 @@
 using System.Windows;
-using TaskNotify.Core;
+using TaskNotify.Core.Events;
+using TaskNotify.Core.Tasks;
 using TaskNotify.Integrations;
 using TaskNotify.ProcessMonitor;
 

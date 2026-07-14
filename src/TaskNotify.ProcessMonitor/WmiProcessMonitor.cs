@@ -2,7 +2,7 @@ using System.Management;
 using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using TaskNotify.Core;
+using TaskNotify.Core.Events;
 
 namespace TaskNotify.ProcessMonitor;
 

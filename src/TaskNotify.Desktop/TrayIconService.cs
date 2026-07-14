@@ -3,7 +3,7 @@ using System.Security.Principal;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 using Forms = System.Windows.Forms;
-using TaskNotify.Core;
+using TaskNotify.Core.Tasks;
 
 namespace TaskNotify.Desktop;
 

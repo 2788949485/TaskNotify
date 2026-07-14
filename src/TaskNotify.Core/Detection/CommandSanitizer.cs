@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace TaskNotify.Core;
+namespace TaskNotify.Core.Detection;
 
 public static partial class CommandSanitizer
 {

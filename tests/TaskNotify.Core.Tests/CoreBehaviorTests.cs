@@ -1,4 +1,6 @@
-using TaskNotify.Core;
+using TaskNotify.Core.Detection;
+using TaskNotify.Core.Events;
+using TaskNotify.Core.Tasks;
 using Xunit;
 
 namespace TaskNotify.Core.Tests;
@@ -114,6 +116,20 @@ public sealed class CoreBehaviorTests
 
         Assert.NotNull(notice);
         Assert.Equal(TaskState.WaitingForPermission, notice.State);
+    }
+
+    [Fact]
+    public void Every_integration_permission_request_notifies()
+    {
+        var tracker = new ProcessTaskTracker();
+        var startedAt = DateTimeOffset.UtcNow;
+
+        tracker.Handle(new IntegrationTaskEvent("claude", "task-1", "Claude Code", null, startedAt, IntegrationTaskAction.Started, null, null));
+        for (var request = 1; request <= 5; request++)
+        {
+            var notice = tracker.Handle(new IntegrationTaskEvent("claude", "task-1", "Claude Code", null, startedAt.AddSeconds(request), IntegrationTaskAction.WaitingForPermission, null, null));
+            Assert.Equal(TaskState.WaitingForPermission, notice?.State);
+        }
     }
 
     [Fact]

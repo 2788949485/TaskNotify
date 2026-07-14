@@ -1,4 +1,4 @@
-namespace TaskNotify.Core;
+namespace TaskNotify.Core.Events;
 
 /// <summary>
 /// A standardized task event emitted by any integration layer

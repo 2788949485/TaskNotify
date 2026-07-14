@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using TaskNotify.Core;
+using TaskNotify.Core.Events;
 
 namespace TaskNotify.ProcessMonitor;
 

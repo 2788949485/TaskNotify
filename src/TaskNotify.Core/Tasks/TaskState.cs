@@ -1,4 +1,4 @@
-namespace TaskNotify.Core;
+namespace TaskNotify.Core.Tasks;
 
 public enum TaskState
 {

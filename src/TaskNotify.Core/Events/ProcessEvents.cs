@@ -1,4 +1,4 @@
-namespace TaskNotify.Core;
+namespace TaskNotify.Core.Events;
 
 public sealed record ProcessIdentity(int ProcessId, DateTimeOffset StartedAt);
 

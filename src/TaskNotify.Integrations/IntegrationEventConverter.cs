@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-using TaskNotify.Core;
+using TaskNotify.Core.Events;
 using TaskNotify.Ipc;
 
 namespace TaskNotify.Integrations;

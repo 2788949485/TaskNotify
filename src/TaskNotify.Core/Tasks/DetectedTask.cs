@@ -1,4 +1,6 @@
-namespace TaskNotify.Core;
+using TaskNotify.Core.Detection;
+
+namespace TaskNotify.Core.Tasks;
 
 public sealed class DetectedTask
 {

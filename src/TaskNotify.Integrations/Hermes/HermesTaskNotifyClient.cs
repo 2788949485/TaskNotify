@@ -1,4 +1,3 @@
-using TaskNotify.Core;
 using TaskNotify.Ipc;
 
 namespace TaskNotify.Integrations.Hermes;

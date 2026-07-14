@@ -1,4 +1,7 @@
-namespace TaskNotify.Core;
+using TaskNotify.Core.Detection;
+using TaskNotify.Core.Events;
+
+namespace TaskNotify.Core.Tasks;
 
 public sealed record TaskCompletionNotice(Guid TaskId, string DisplayName, TimeSpan Duration, TaskState State);
 
@@ -71,9 +74,12 @@ public sealed class ProcessTaskTracker
         var transitioned = tracked.Task.Apply(signal, confidence, integrationEvent.OccurredAt, integrationEvent.ExitCode);
         var duration = integrationEvent.OccurredAt - startedAt;
 
-        if (transitioned && integrationEvent.Action is IntegrationTaskAction.WaitingForInput or IntegrationTaskAction.WaitingForPermission)
+        if (integrationEvent.Action is IntegrationTaskAction.WaitingForInput or IntegrationTaskAction.WaitingForPermission)
         {
-            return new(tracked.Task.Id, tracked.Task.DisplayName, duration, tracked.Task.State);
+            var waitingState = integrationEvent.Action == IntegrationTaskAction.WaitingForPermission
+                ? TaskState.WaitingForPermission
+                : TaskState.WaitingForInput;
+            return new(tracked.Task.Id, tracked.Task.DisplayName, duration, waitingState);
         }
 
         if (transitioned && TaskStateMachine.IsTerminal(tracked.Task.State))

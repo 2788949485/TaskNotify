@@ -1,5 +1,6 @@
 using System.Diagnostics;
-using TaskNotify.Core;
+using TaskNotify.Core.Events;
+using TaskNotify.Core.Tasks;
 using TaskNotify.ProcessMonitor;
 using Xunit;
 

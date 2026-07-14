@@ -1,6 +1,7 @@
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Windows.AppNotifications;
+using TaskNotify.Core.Tasks;
 using TaskNotify.Integrations.Claude;
 using TaskNotify.Integrations.Codex;
 using TaskNotify.Integrations.Hermes;
@@ -84,8 +85,8 @@ public partial class App : System.Windows.Application
 
     private void TestNotification()
     {
-        var notice = new TaskNotify.Core.TaskCompletionNotice(
-            Guid.NewGuid(), "TaskNotify 测试", TimeSpan.Zero, TaskNotify.Core.TaskState.EndedUnknown);
+        var notice = new TaskCompletionNotice(
+            Guid.NewGuid(), "TaskNotify 测试", TimeSpan.Zero, TaskState.EndedUnknown);
         _history?.Add(notice);
         _tray?.Show(notice);
     }
